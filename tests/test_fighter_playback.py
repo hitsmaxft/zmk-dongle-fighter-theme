@@ -124,7 +124,7 @@ class FighterPlaybackTest(unittest.TestCase):
         self.assertEqual(plan["Iori"]["fast"]["animation"], "fighter_fast_projectile")
         self.assertEqual(plan["Orochi_Iori"]["fast"]["animation"], "kin_ya_otome_s")
 
-    def test_default_roster_has_rom_timing_and_only_confirmed_airborne_offsets(self):
+    def test_default_roster_has_rom_timing_and_int8_phase_offsets(self):
         plan = json.loads(PLAYBACK_PLAN.read_text(encoding="utf-8"))[
             "characters"
         ]
@@ -143,8 +143,9 @@ class FighterPlaybackTest(unittest.TestCase):
                 self.assertEqual(timing["total_ticks"], sum(timing["step_ticks"]))
                 self.assertEqual(timing["disassembly_revision"], "47acd3002897ccd6b46df70809e8d6236ed3ebc3")
                 offsets = fast.get("y_offsets", [])
-                self.assertEqual(any(value == -10 for value in offsets), name in airborne)
-                self.assertTrue(all(value in (0, -10) for value in offsets))
+                if name in airborne:
+                    self.assertIn(-10, offsets)
+                self.assertTrue(all(-127 <= value <= 127 for value in offsets))
 
     def test_default_mid_actions_have_reviewed_rom_timelines(self):
         plan = json.loads(PLAYBACK_PLAN.read_text(encoding="utf-8"))[
@@ -246,7 +247,7 @@ class FighterPlaybackTest(unittest.TestCase):
         self.assertEqual(durations, [352, 50, 151, 150, 101])
         self.assertEqual(sum(durations), gb_logic_durations([48])[0])
 
-    def test_airborne_y_offsets_are_strict_and_emitted(self):
+    def test_y_offsets_accept_airborne_and_projectile_phase_values(self):
         order = list(range(8))
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -267,14 +268,22 @@ class FighterPlaybackTest(unittest.TestCase):
             self.assertIn("fighter_kyo_fast_images_y_offsets[] = {0, 0, -10", header)
             self.assertIn("ZMK_DONGLE_ANIMATION_ACTION_LAYOUT_Y_OFFSETS_DEFINE(", header)
 
+            phase_offsets = [0, 0, -9, -10, -10, 0, 0, 0]
             write_plan(
                 plan,
                 "Kyo",
                 "ura_orochi_nagi_d",
                 order,
-                y_offsets=[0, 0, -9, -10, -10, 0, 0, 0],
+                y_offsets=phase_offsets,
             )
-            with self.assertRaisesRegex(ValueError, r"y_offsets\[2\].*expected 0 or -10"):
+            loaded = load_playback_plan(plan, self.bitmap_manifest["characters"])
+            self.assertEqual(loaded[("Kyo", "fast")]["y_offsets"], phase_offsets)
+
+            phase_offsets[2] = -128
+            write_plan(
+                plan, "Kyo", "ura_orochi_nagi_d", order, y_offsets=phase_offsets
+            )
+            with self.assertRaisesRegex(ValueError, r"y_offsets\[2\].*outside -127..127"):
                 load_playback_plan(plan, self.bitmap_manifest["characters"])
 
     def test_rom_timing_schema_rejects_inconsistent_boundaries(self):
@@ -302,14 +311,17 @@ class FighterPlaybackTest(unittest.TestCase):
             plan = Path(directory) / "plan.json"
             write_plan(plan, "Kyo", "ura_orochi_nagi_d", order, timing=timing)
             loaded = load_playback_plan(plan, self.bitmap_manifest["characters"])
-            self.assertEqual(loaded[("Kyo", "fast")]["durations_ms"], [33, 34, 33, 34])
+            self.assertEqual(
+                loaded[("Kyo", "fast")]["durations_ms"],
+                [33, 34, 33, 34, 33, 34, 33, 34],
+            )
 
             timing["total_ticks"] = 7
             write_plan(plan, "Kyo", "ura_orochi_nagi_d", order, timing=timing)
             with self.assertRaisesRegex(ValueError, r"total_ticks must equal"):
                 load_playback_plan(plan, self.bitmap_manifest["characters"])
 
-    def test_source_tick_sampling_parameter_reduces_steps_without_changing_time(self):
+    def test_display_divisor_preserves_states_unless_frame_drop_is_explicit(self):
         with tempfile.TemporaryDirectory() as default_directory:
             default = self.generate_character(default_directory, "Kyo")
         with tempfile.TemporaryDirectory() as reduced_directory:
@@ -319,19 +331,28 @@ class FighterPlaybackTest(unittest.TestCase):
                 "--source-ticks-per-display-frame",
                 "4",
             )
+        with tempfile.TemporaryDirectory() as sampled_directory:
+            sampled = self.generate_character(
+                sampled_directory,
+                "Kyo",
+                "--source-ticks-per-display-frame",
+                "4",
+                "--allow-source-frame-drop",
+            )
         default_fast = default["characters"]["Kyo"]["sequences"]["fast"]
         reduced_fast = reduced["characters"]["Kyo"]["sequences"]["fast"]
-        self.assertEqual(default_fast["timing_report"]["sampled_display_slots"], 30)
-        self.assertEqual(default_fast["playback_step_count"], 20)
-        self.assertEqual(reduced_fast["timing_report"]["sampled_display_slots"], 15)
-        self.assertEqual(reduced_fast["playback_step_count"], 12)
-        self.assertEqual(default_fast["duration_ms"], reduced_fast["duration_ms"])
+        sampled_fast = sampled["characters"]["Kyo"]["sequences"]["fast"]
+        self.assertEqual(default_fast["playback_order"], reduced_fast["playback_order"])
+        self.assertEqual(default_fast["playback_step_count"], 36)
+        self.assertEqual(reduced_fast["playback_step_count"], 36)
+        self.assertGreater(reduced_fast["duration_ms"], default_fast["duration_ms"])
+        self.assertLess(sampled_fast["playback_step_count"], reduced_fast["playback_step_count"])
+        self.assertEqual(sampled_fast["duration_ms"], 988)
+        self.assertEqual(sampled_fast["timing_report"]["source_frame_drop_enabled"], 1)
         self.assertEqual(reduced_fast["timing_report"]["target_hz_millihertz"], 14932)
 
     def test_sampling_preserves_named_projectiles_or_fails_explicitly(self):
-        reduced = load_playback_plan(
-            PLAYBACK_PLAN, self.bitmap_manifest["characters"], 4
-        )
+        reduced = load_playback_plan(PLAYBACK_PLAN, self.bitmap_manifest["characters"], 8)
         for character in ("Athena", "Geese", "Mr_Karate"):
             with self.subTest(character=character):
                 action = reduced[(character, "fast")]
@@ -343,7 +364,61 @@ class FighterPlaybackTest(unittest.TestCase):
             ValueError,
             r"Mr_Karate/fast cannot preserve required source frames \[39\].*8 source ticks/frame",
         ):
-            load_playback_plan(PLAYBACK_PLAN, self.bitmap_manifest["characters"], 8)
+            load_playback_plan(
+                PLAYBACK_PLAN, self.bitmap_manifest["characters"], 8, True
+            )
+
+    def test_default_30hz_quantization_keeps_every_planned_bitmap(self):
+        source = json.loads(PLAYBACK_PLAN.read_text(encoding="utf-8"))["characters"]
+        loaded = load_playback_plan(PLAYBACK_PLAN, self.bitmap_manifest["characters"])
+        for character, sequences in source.items():
+            for sequence, entry in sequences.items():
+                if "timing" not in entry:
+                    continue
+                with self.subTest(character=character, sequence=sequence):
+                    adapted = loaded[(character, sequence)]
+                    self.assertEqual(set(adapted["order"]), set(entry["order"]))
+                    self.assertEqual(
+                        adapted["timing_report"]["source_frame_drop_enabled"], 0
+                    )
+                    source_states = []
+                    expected_states = []
+                    movement = [
+                        int(value == "move") for value in entry.get("movement", [])
+                    ]
+                    recovery_step = entry["timing"]["recovery"]["start_step"]
+                    return_step = entry.get("return_step")
+                    for index, frame in enumerate(entry["order"]):
+                        state = (
+                            frame,
+                            entry.get("x_offsets", [None] * len(entry["order"]))[index],
+                            entry.get("y_offsets", [None] * len(entry["order"]))[index],
+                            movement[index] if movement else None,
+                        )
+                        source_states.append(state)
+                        may_merge = (
+                            expected_states
+                            and expected_states[-1] == state
+                            and (not movement or not movement[index])
+                            and index not in (recovery_step, return_step)
+                        )
+                        if not may_merge:
+                            expected_states.append(state)
+                    adapted_states = [
+                        (
+                            frame,
+                            adapted.get("x_offsets", [None] * len(adapted["order"]))[index],
+                            adapted.get("y_offsets", [None] * len(adapted["order"]))[index],
+                            adapted.get("movement_steps", [None] * len(adapted["order"]))[index],
+                        )
+                        for index, frame in enumerate(adapted["order"])
+                    ]
+                    self.assertEqual(adapted_states, expected_states)
+        for character in ("Ryo", "Robert", "Mr_Karate"):
+            self.assertEqual(
+                loaded[(character, "fast")]["order"],
+                source[character]["fast"]["order"],
+            )
 
     def test_generator_emits_timed_plain_and_return_macros(self):
         order = list(range(8))
@@ -430,10 +505,10 @@ class FighterPlaybackTest(unittest.TestCase):
 
         self.assertEqual(fast["animation"], "ura_orochi_nagi_d")
         self.assertEqual(fast["selected_frame_count"], 8)
-        self.assertEqual(fast["playback_step_count"], 20)
-        self.assertEqual(fast["timing_report"]["sampled_display_slots"], 30)
-        self.assertEqual(fast["timing_report"]["collapsed_hold_slots"], 10)
-        self.assertEqual(fast["duration_ms"], 988)
+        self.assertEqual(fast["playback_step_count"], 36)
+        self.assertEqual(fast["timing_report"]["sampled_display_slots"], 47)
+        self.assertEqual(fast["timing_report"]["collapsed_hold_slots"], 11)
+        self.assertEqual(fast["duration_ms"], 1574)
         self.assertEqual(fast["timing_report"]["total_ticks"], 59)
         self.assertEqual(fast["timing_report"]["target_hz_millihertz"], 29864)
         self.assertEqual(fast["movement_step_count"], 4)
@@ -447,10 +522,10 @@ class FighterPlaybackTest(unittest.TestCase):
         self.assertEqual(fast["animation"], "cho_hissatsu_shinobibachi_d")
         source = json.loads(PLAYBACK_PLAN.read_text())["characters"]["Mai"]["fast"]
         self.assertEqual(source["order"], [0, 1, 2, 3, 4, 5, 6, 7] + [8, 9] * 12 + [10])
-        self.assertEqual(fast["playback_step_count"], 17)
-        self.assertEqual(fast["timing_report"]["sampled_display_slots"], 26)
+        self.assertEqual(fast["playback_step_count"], 33)
+        self.assertEqual(fast["timing_report"]["sampled_display_slots"], 42)
         self.assertEqual(fast["timing_report"]["collapsed_hold_slots"], 9)
-        self.assertEqual(fast["duration_ms"], 854)
+        self.assertEqual(fast["duration_ms"], 1406)
         self.assertEqual(fast["timing_report"]["total_ticks"], 51)
         self.assertIn(-10, fast["y_offsets"])
 
@@ -463,19 +538,19 @@ class FighterPlaybackTest(unittest.TestCase):
         source = json.loads(PLAYBACK_PLAN.read_text())["characters"]["Orochi_Leona"]["fast"]
         self.assertEqual(source["order"][4:28], [4, 5, 6] * 8)
         self.assertEqual(source["return_step"], 28)
-        self.assertEqual(fast["playback_step_count"], 22)
-        self.assertEqual(fast["timing_report"]["sampled_display_slots"], 41)
-        self.assertEqual(fast["timing_report"]["collapsed_hold_slots"], 19)
-        self.assertEqual(fast["duration_ms"], 1373)
+        self.assertEqual(fast["playback_step_count"], 34)
+        self.assertEqual(fast["timing_report"]["sampled_display_slots"], 55)
+        self.assertEqual(fast["timing_report"]["collapsed_hold_slots"], 21)
+        self.assertEqual(fast["duration_ms"], 1842)
         self.assertEqual(fast["timing_report"]["total_ticks"], 82)
         self.assertIn(-10, fast["y_offsets"])
 
     def test_second_batch_fast_plans_preserve_loops_and_approaches(self):
         expectations = {
-            "Daimon": ("heaven_hell_drop_s", 24, 109, 85, 217, 3633),
-            "Andy": ("cho_reppa_dan_s", 6, 29, 23, 58, 971),
-            "Athena": ("fighter_fast_projectile", 63, 69, 6, 137, 2294),
-            "Orochi_Iori": ("kin_ya_otome_s", 21, 33, 12, 66, 1105),
+            "Daimon": ("heaven_hell_drop_s", 27, 116, 89, 217, 3884),
+            "Andy": ("cho_reppa_dan_s", 6, 31, 25, 58, 1038),
+            "Athena": ("fighter_fast_projectile", 126, 131, 5, 137, 4387),
+            "Orochi_Iori": ("kin_ya_otome_s", 37, 51, 14, 66, 1708),
         }
         for character, (
             animation, steps, slots, collapsed, total_ticks, duration_ms
@@ -540,10 +615,69 @@ class FighterPlaybackTest(unittest.TestCase):
                 )
                 self.assertEqual(selected_projectiles, expected)
 
+        plan = json.loads(PLAYBACK_PLAN.read_text(encoding="utf-8"))["characters"]
+        geese = plan["Geese"]["fast"]
+        geese_positions = {
+            frame: {
+                x
+                for selected, x in zip(
+                    geese["order"], geese["x_offsets"], strict=True
+                )
+                if selected == frame
+            }
+            for frame in range(3, 7)
+        }
+        self.assertEqual(
+            [next(iter(geese_positions[frame])) for frame in range(3, 7)],
+            [-36, 0, -24, -13],
+        )
+        geese_frames = self.bitmap_manifest["characters"]["Geese"]["animations"][
+            "fighter_fast_projectile"
+        ]["frames"]
+        geese_root = BITMAPS / "Geese" / "fighter_fast_projectile"
+        self.assertEqual(
+            (geese_root / geese_frames[3]["file"]).read_bytes(),
+            (geese_root / geese_frames[5]["file"]).read_bytes(),
+        )
+        self.assertEqual(
+            (geese_root / geese_frames[4]["file"]).read_bytes(),
+            (geese_root / geese_frames[6]["file"]).read_bytes(),
+        )
+
+        athena = plan["Athena"]["fast"]
+        athena_positions = {
+            frame: [
+                x
+                for selected, x in zip(
+                    athena["order"], athena["x_offsets"], strict=True
+                )
+                if selected == frame
+            ]
+            for frame in range(9, 13)
+        }
+        self.assertEqual(len(set(athena_positions[9])), 1)
+        athena_y = {
+            y
+            for frame, y in zip(
+                athena["order"], athena["y_offsets"], strict=True
+            )
+            if frame == 9
+        }
+        self.assertEqual(athena_y, {-18})
+        thrown_positions = [
+            x
+            for frame, x in zip(
+                athena["order"], athena["x_offsets"], strict=True
+            )
+            if frame in range(10, 13)
+        ]
+        self.assertLess(min(thrown_positions), max(thrown_positions))
+        self.assertLess(min(thrown_positions[-4:]), thrown_positions[0])
+
     def test_ryo_and_robert_finish_with_reused_airborne_uppercuts(self):
         expectations = {
-            "Ryo": (23, 51, 28, 102, 1708),
-            "Robert": (22, 46, 24, 92, 1540),
+            "Ryo": (35, 53, 18, 102, 1775),
+            "Robert": (30, 48, 18, 92, 1607),
         }
         for character, (steps, slots, collapsed, ticks, duration_ms) in expectations.items():
             with self.subTest(character=character):
@@ -565,15 +699,24 @@ class FighterPlaybackTest(unittest.TestCase):
         fast = result["characters"]["Goenitz"]["sequences"]["fast"]
 
         self.assertEqual(fast["animation"], "fighter_fast_projectile")
-        self.assertEqual(fast["playback_step_count"], 19)
-        self.assertEqual(fast["timing_report"]["sampled_display_slots"], 35)
-        self.assertEqual(fast["timing_report"]["collapsed_hold_slots"], 16)
+        self.assertEqual(fast["playback_step_count"], 23)
+        self.assertEqual(fast["timing_report"]["sampled_display_slots"], 42)
+        self.assertEqual(fast["timing_report"]["collapsed_hold_slots"], 19)
         self.assertEqual(fast["timing_report"]["total_ticks"], 69)
-        self.assertEqual(fast["duration_ms"], 1155)
-        self.assertTrue({11, 12}.issubset(fast["selected_source_indices"]))
+        self.assertEqual(fast["duration_ms"], 1406)
+        self.assertTrue({11, 12, 13}.issubset(fast["selected_source_indices"]))
+        tornado_positions = {
+            frame: set()
+            for frame in (11, 12, 13)
+        }
+        for frame, x_offset in zip(
+            fast["playback_order"], fast["x_offsets"], strict=True
+        ):
+            if frame in tornado_positions:
+                tornado_positions[frame].add(x_offset)
+        self.assertEqual(len({next(iter(values)) for values in tornado_positions.values()}), 3)
         self.assertIn(-32, fast["x_offsets"])
-        self.assertEqual(fast["movement_step_count"], 1)
-        self.assertEqual(len(fast["generated_symbols"]), 13)
+        self.assertEqual(len(fast["generated_symbols"]), 14)
 
     def test_mid_and_fast_reused_body_frames_share_generated_symbols(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -596,7 +739,8 @@ class FighterPlaybackTest(unittest.TestCase):
         self.assertEqual(fast["playback_order"][41:], [26, 27])
         self.assertIsNone(fast["movement"])
         self.assertEqual(fast["x_offsets"][:5], [0, -16, -32, -48, -64])
-        self.assertEqual(fast["x_offsets"][5:], [-64] * 38)
+        self.assertTrue(all(-64 <= value <= 0 for value in fast["x_offsets"]))
+        self.assertEqual(fast["x_offsets"][5:29], [-64] * 24)
         self.assertEqual(fast["movement_step_count"], 4)
         self.assertEqual(fast["duration_ms"], 7620)
         self.assertEqual(fast["durations_ms"][28:41], [60] + [80] * 12)
@@ -608,8 +752,8 @@ class FighterPlaybackTest(unittest.TestCase):
         fast = result["characters"]["Terry"]["sequences"]["fast"]
 
         self.assertEqual(fast["animation"], "fighter_fast_projectile")
-        self.assertEqual(fast["playback_step_count"], 54)
-        self.assertEqual(fast["duration_ms"], 3332)
+        self.assertEqual(fast["playback_step_count"], 105)
+        self.assertEqual(fast["duration_ms"], 5090)
         self.assertEqual(fast["timing"]["total_ticks"], 199)
         self.assertEqual(fast["timing"]["startup"]["ticks"], 21)
         self.assertEqual(fast["timing"]["recovery"]["ticks"], 61)
@@ -621,9 +765,10 @@ class FighterPlaybackTest(unittest.TestCase):
                 "source_hz_millihertz": 59728,
                 "source_ticks_per_display_frame": 2,
                 "target_hz_millihertz": 29864,
-                "sampled_display_slots": 100,
-                "playback_steps": 54,
-                "collapsed_hold_slots": 46,
+                "sampled_display_slots": 152,
+                "playback_steps": 105,
+                "collapsed_hold_slots": 47,
+                "source_frame_drop_enabled": 0,
                 "startup_ticks": 21,
                 "body_ticks": 117,
                 "recovery_ticks": 61,
@@ -632,7 +777,8 @@ class FighterPlaybackTest(unittest.TestCase):
                 "startup_ms": 352,
                 "body_ms": 1958,
                 "recovery_ms": 1022,
-                "total_ms": 3332,
+                "source_total_ms": 3332,
+                "total_ms": 5090,
             },
         )
         self.assertEqual(len(fast["generated_symbols"]), 5)
@@ -642,16 +788,21 @@ class FighterPlaybackTest(unittest.TestCase):
             result = self.generate_character(directory, "Mr_Karate")
         fast = result["characters"]["Mr_Karate"]["sequences"]["fast"]
         self.assertEqual(fast["animation"], "fighter_fast_projectile")
-        self.assertEqual(fast["playback_step_count"], 36)
-        self.assertEqual(fast["timing_report"]["sampled_display_slots"], 66)
-        self.assertEqual(fast["timing_report"]["collapsed_hold_slots"], 30)
+        self.assertEqual(fast["playback_step_count"], 64)
+        self.assertEqual(fast["timing_report"]["sampled_display_slots"], 85)
+        self.assertEqual(fast["timing_report"]["collapsed_hold_slots"], 21)
         self.assertEqual(fast["timing_report"]["total_ticks"], 132)
-        self.assertEqual(fast["duration_ms"], 2210)
+        self.assertEqual(fast["duration_ms"], 2846)
         self.assertTrue({38, 39}.issubset(fast["selected_source_indices"]))
         airborne = [
             (x, y)
-            for x, y in zip(fast["x_offsets"], fast["y_offsets"], strict=True)
-            if y == -10
+            for frame, x, y in zip(
+                fast["playback_order"],
+                fast["x_offsets"],
+                fast["y_offsets"],
+                strict=True,
+            )
+            if frame in (30, 31)
         ]
         self.assertGreaterEqual(len(airborne), 8)
         self.assertEqual(airborne, sorted(airborne))
@@ -669,16 +820,11 @@ class FighterPlaybackTest(unittest.TestCase):
 
     def test_repeated_steps_do_not_duplicate_bitmap_payload(self):
         with tempfile.TemporaryDirectory() as custom_directory:
-            custom = self.generate_character(custom_directory, "Kyo")
-        with tempfile.TemporaryDirectory() as plain_directory:
-            plain = self.generate_character(
-                plain_directory, "Kyo", "--no-playback-plan"
-            )
-
-        self.assertEqual(custom["logical_frame_count"], plain["logical_frame_count"])
-        self.assertEqual(custom["unique_frame_count"], plain["unique_frame_count"])
-        self.assertEqual(custom["image_bytes"], plain["image_bytes"])
-        self.assertGreater(custom["playback_step_count"], plain["playback_step_count"])
+            result = self.generate_character(custom_directory, "Kyo")
+        fast = result["characters"]["Kyo"]["sequences"]["fast"]
+        self.assertGreater(fast["playback_step_count"], fast["selected_frame_count"])
+        self.assertEqual(len(fast["generated_symbols"]), fast["selected_frame_count"])
+        self.assertLessEqual(len(set(fast["symbols"])), fast["selected_frame_count"])
 
 
 if __name__ == "__main__":

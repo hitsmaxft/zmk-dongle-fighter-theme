@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
+from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
 
@@ -15,6 +17,25 @@ import migrate_default_fighter_timing as fighter_timing
 
 CANVAS = 64
 VIRTUAL_ANIMATION = "fighter_fast_projectile"
+
+
+@dataclass(frozen=True)
+class VirtualFrames:
+    frames: dict[tuple[str, int] | tuple[str, str], int]
+    projectile_offsets: dict[str, tuple[int, int]]
+
+    def __getitem__(self, key: tuple[str, int] | tuple[str, str]) -> int:
+        return self.frames[key]
+
+    def projectile(
+        self, name: str, x_offset: int = 0, y_offset: int = 0
+    ) -> tuple[int, int, int]:
+        phase_x, phase_y = self.projectile_offsets[name]
+        # A virtual frame is always 64px wide and is anchored in the right half
+        # of the 128px OLED.  Keep phase metadata within the visible [-64, 0]
+        # travel range while retaining every representable ROM displacement.
+        placed_x = max(-64, min(0, x_offset + phase_x))
+        return self.frames[("projectile", name)], placed_x, y_offset + phase_y
 
 
 def bounds(frames: list[dict[str, object]]) -> tuple[int, int, int, int]:
@@ -32,26 +53,6 @@ def fit_scale(source_bounds: tuple[int, int, int, int]) -> tuple[int, int]:
     return scale.numerator, scale.denominator
 
 
-def render_group(
-    root: Path, animation: dict[str, object], indices: list[int]
-) -> dict[int, list[list[int]]]:
-    selected = [animation["frames"][index] for index in sorted(set(indices))]
-    source_bounds = bounds(selected)
-    scale_num, scale_den = fit_scale(source_bounds)
-    return {
-        index: fighter.render_frame(
-            root / animation["frames"][index]["file"],
-            animation["frames"][index],
-            source_bounds,
-            scale_num,
-            scale_den,
-            CANVAS,
-            CANVAS,
-        )
-        for index in sorted(set(indices))
-    }
-
-
 def write_virtual_animation(
     bitmaps: Path,
     manifest: dict[str, object],
@@ -60,25 +61,82 @@ def write_virtual_animation(
     character_name: str,
     body_groups: list[tuple[str, list[int]]],
     projectile_names: list[str],
-) -> dict[tuple[str, int] | tuple[str, str], int]:
+) -> VirtualFrames:
     character = manifest["characters"][character_name]
     output = bitmaps / character_name / VIRTUAL_ANIMATION
     output.mkdir(parents=True, exist_ok=True)
     for old in output.glob("*.bmp"):
         old.unlink()
     canvases: list[tuple[tuple[str, int] | tuple[str, str], list[list[int]]]] = []
+    body_frames: list[tuple[str, int, Path, dict[str, object]]] = []
     for animation_name, indices in body_groups:
         animation = character["animations"][animation_name]
-        rendered = render_group(bitmaps / character_name / animation_name, animation, indices)
-        canvases.extend(((animation_name, index), rendered[index]) for index in sorted(rendered))
-    for name in projectile_names:
-        frame = projectile_manifest["frames"][name]
-        rendered = render_group(
-            projectile_root,
-            {"frames": [frame]},
-            [0],
-        )[0]
-        canvases.append((("projectile", name), rendered))
+        body_frames.extend(
+            (
+                animation_name,
+                index,
+                bitmaps / character_name / animation_name / animation["frames"][index]["file"],
+                animation["frames"][index],
+            )
+            for index in sorted(set(indices))
+        )
+    if body_frames:
+        body_bounds = bounds([frame for _, _, _, frame in body_frames])
+        body_scale_num, body_scale_den = fit_scale(body_bounds)
+        canvases.extend(
+            (
+                (animation_name, index),
+                fighter.render_frame(
+                    path,
+                    frame,
+                    body_bounds,
+                    body_scale_num,
+                    body_scale_den,
+                    CANVAS,
+                    CANVAS,
+                ),
+            )
+            for animation_name, index, path, frame in body_frames
+        )
+
+    projectile_offsets: dict[str, tuple[int, int]] = {}
+    if projectile_names:
+        projectile_frames = [projectile_manifest["frames"][name] for name in projectile_names]
+        projectile_bounds = bounds(projectile_frames)
+        scale_num, scale_den = fit_scale(projectile_bounds)
+        union_left, union_top, union_right, union_bottom = projectile_bounds
+        union_width = math.ceil((union_right - union_left) * scale_num / scale_den)
+        union_height = math.ceil((union_bottom - union_top) * scale_num / scale_den)
+        common_left = (CANVAS - union_width) // 2
+        common_top = CANVAS - union_height
+        for name, frame in zip(projectile_names, projectile_frames, strict=True):
+            frame_bounds = bounds([frame])
+            rendered = fighter.render_frame(
+                projectile_root / frame["file"],
+                frame,
+                frame_bounds,
+                scale_num,
+                scale_den,
+                CANVAS,
+                CANVAS,
+            )
+            scaled_width = math.ceil(int(frame["width"]) * scale_num / scale_den)
+            scaled_height = math.ceil(int(frame["height"]) * scale_num / scale_den)
+            normalized_left = (CANVAS - scaled_width) // 2
+            normalized_top = CANVAS - scaled_height
+            desired_left = (
+                common_left
+                + (int(frame["origin_x"]) - union_left) * scale_num // scale_den
+            )
+            desired_top = (
+                common_top
+                + (int(frame["origin_y"]) - union_top) * scale_num // scale_den
+            )
+            projectile_offsets[name] = (
+                desired_left - normalized_left,
+                desired_top - normalized_top,
+            )
+            canvases.append((("projectile", name), rendered))
 
     frame_info = []
     lookup: dict[tuple[str, int] | tuple[str, str], int] = {}
@@ -97,7 +155,7 @@ def write_virtual_animation(
         "unused_or_placeholder": False,
         "frames": frame_info,
     }
-    return lookup
+    return VirtualFrames(lookup, projectile_offsets)
 
 
 def rle_source_timeline(
@@ -166,12 +224,19 @@ def main() -> None:
     iori_order = [iori[("kin_ya_otome_d", 0)]]
     iori_order.extend([iori[("kin_ya_otome_d", 1)]] * 4)
     iori_order.extend(iori[("kin_ya_otome_d", index)] for index in range(2, 26))
+    iori_offsets = [0, -16, -32, -48, -64] + [-64] * (len(iori_order) - 5)
+    iori_y_offsets = [0] * len(iori_order)
     plain = iori[("kin_ya_otome_d", 25)]
     for _ in range(3):
-        iori_order.extend([iori[("projectile", "iori_fire_a")], plain,
-                           iori[("projectile", "iori_fire_b")], plain])
-    iori_order.extend(iori[("kin_ya_otome_d", index)] for index in (26, 27))
-    iori_offsets = [0, -16, -32, -48, -64] + [-64] * (len(iori_order) - 5)
+        for projectile_name in ("iori_fire_a", "iori_fire_b"):
+            flame, flame_x, flame_y = iori.projectile(projectile_name, -64, 0)
+            iori_order.extend([flame, plain])
+            iori_offsets.extend([flame_x, -64])
+            iori_y_offsets.extend([flame_y, 0])
+    for index in (26, 27):
+        iori_order.append(iori[("kin_ya_otome_d", index)])
+        iori_offsets.append(-64)
+        iori_y_offsets.append(0)
     iori_durations = [500] + [200] * (len(iori_order) - 2) + [500]
     # The terminal body mapping owns the long MAX finisher window.  Keep the
     # body visible briefly, then spend the remaining 1.02 s flashing flames.
@@ -218,7 +283,7 @@ def main() -> None:
         for _ in range(ticks):
             if body_frame == 3 and projectile_tick < 8 and projectile_tick % 2 == 0:
                 name, x_offset = projectile_cycle[projectile_tick // 2]
-                karate_states.append((karate[("projectile", name)], x_offset, 0))
+                karate_states.append(karate.projectile(name, x_offset, 0))
             else:
                 karate_states.append((karate[("haoh_sho_koh_ken_d", body_frame)], 0, 0))
             if body_frame == 3:
@@ -239,6 +304,7 @@ def main() -> None:
     release = terry[("power_geyser_e", 2)]
     terry_order.extend([release, release])  # source frames #3 and #4
     terry_offsets = [0] * len(terry_order)
+    terry_y_offsets = [0] * len(terry_order)
     terry_step_ticks = [21, 3, 9, 9, 6]
     # Frames #4..#12 spawn fifteen replacing geysers at frame end; #13 spawns
     # the sixteenth and changes #14 to a 61-tick recovery. Use deterministic
@@ -255,10 +321,15 @@ def main() -> None:
     ]
     for spawn_offset in geyser_offsets[:-1]:
         for projectile_name, hidden in short_cycle:
-            terry_order.append(
-                release if hidden else terry[("projectile", projectile_name)]
+            state = (
+                (release, 0, 0)
+                if hidden
+                else terry.projectile(projectile_name, spawn_offset, 0)
             )
-            terry_offsets.append(0 if hidden else spawn_offset)
+            frame, x_offset, y_offset = state
+            terry_order.append(frame)
+            terry_offsets.append(x_offset)
+            terry_y_offsets.append(y_offset)
             terry_step_ticks.append(1)
     # The final projectile retains all eleven V,V,V,H,V,H,V,H,V,H,V mappings.
     final_cycle = [
@@ -268,13 +339,19 @@ def main() -> None:
     ]
     recovery_start_step = len(terry_order)
     for projectile_name in final_cycle:
-        terry_order.append(
-            release if projectile_name is None else terry[("projectile", projectile_name)]
+        state = (
+            (release, 0, 0)
+            if projectile_name is None
+            else terry.projectile(projectile_name, geyser_offsets[-1], 0)
         )
-        terry_offsets.append(0 if projectile_name is None else geyser_offsets[-1])
+        frame, x_offset, y_offset = state
+        terry_order.append(frame)
+        terry_offsets.append(x_offset)
+        terry_y_offsets.append(y_offset)
         terry_step_ticks.append(1)
     terry_order.append(release)
     terry_offsets.append(0)
+    terry_y_offsets.append(0)
     terry_step_ticks.append(50)  # #14 owns 61 ticks; final projectile overlaps the first 11.
     terry_timing = {
         "schema": 2,
@@ -343,7 +420,7 @@ def main() -> None:
         args.bitmaps, manifest, args.projectiles, projectile_manifest, "Goenitz",
         [("shinyaotome_jissoukoku_dl", list(range(4))),
          ("shinyaotome_throw_h", list(range(7)))],
-        ["goenitz_tornado_a", "goenitz_tornado_b"],
+        ["goenitz_tornado_a", "goenitz_tornado_mid", "goenitz_tornado_b"],
     )
     goenitz_order = [
         goenitz[("shinyaotome_jissoukoku_dl", 0)],
@@ -353,17 +430,33 @@ def main() -> None:
     ]
     goenitz_order.extend(goenitz[("shinyaotome_throw_h", index)] for index in range(3))
     lifted = goenitz[("shinyaotome_throw_h", 2)]
-    goenitz_order.extend([
-        goenitz[("projectile", "goenitz_tornado_a")], lifted,
-        goenitz[("projectile", "goenitz_tornado_b")], lifted,
-    ] * 2)
+    goenitz_offsets = [0, 0, 0, -32] + [-32] * 3
+    goenitz_y_offsets = [0] * len(goenitz_order)
+    tornado_bases = {
+        "goenitz_tornado_a": -40,
+        "goenitz_tornado_mid": -32,
+        "goenitz_tornado_b": -24,
+    }
+    for _ in range(2):
+        for projectile_name in (
+            "goenitz_tornado_a",
+            "goenitz_tornado_mid",
+            "goenitz_tornado_b",
+        ):
+            wind, wind_x, wind_y = goenitz.projectile(
+                projectile_name, tornado_bases[projectile_name], 0
+            )
+            goenitz_order.extend([wind, lifted])
+            goenitz_offsets.extend([wind_x, -32])
+            goenitz_y_offsets.extend([wind_y, 0])
     goenitz_order.extend(goenitz[("shinyaotome_throw_h", index)] for index in range(3, 7))
-    goenitz_offsets = [0, 0, 0, -32] + [-32] * (len(goenitz_order) - 4)
+    goenitz_offsets.extend([-32] * 4)
+    goenitz_y_offsets.extend([0] * 4)
     goenitz_durations = [500] + [200] * (len(goenitz_order) - 2) + [500]
     # Yonokaze itself lives for 0x28 ticks (~670 ms) and never switches to an
     # invisible mapping.  Divide that lifetime over the requested wind/lift
     # alternation while preserving the lifted body pose between wind frames.
-    goenitz_durations[7:15] = [84] * 6 + [83] * 2
+    goenitz_durations[7:19] = [56] * 10 + [55] * 2
 
     athena = write_virtual_animation(
         args.bitmaps, manifest, args.projectiles, projectile_manifest, "Athena",
@@ -396,16 +489,21 @@ def main() -> None:
         if show_projectile:
             if tick < 68:
                 projectile_name = "athena_shcryst_swirl"
-                x_offset = 0
+                x_offset = -8
+                y_offset = 6
             else:
                 projectile_name = thrown_names[thrown_step % len(thrown_names)]
-                x_offset = -min(64, thrown_step * 4)
+                x_offset = -min(64, 8 + thrown_step * 4)
+                y_offset = -10
                 thrown_step += 1
-            frame = athena[("projectile", projectile_name)]
+            state = athena.projectile(projectile_name, x_offset, y_offset)
         else:
-            frame = athena[("shining_crystal_bit_as", body_frame)]
-            x_offset = 0
-        athena_states.append((frame, x_offset, 0 if recovery else -10))
+            state = (
+                athena[("shining_crystal_bit_as", body_frame)],
+                0,
+                0 if recovery else -10,
+            )
+        athena_states.append(state)
     (
         athena_order,
         athena_offsets,
@@ -431,28 +529,43 @@ def main() -> None:
         elapsed = tick - 22
         show_pillar = 0 <= elapsed < len(pillar_mappings) and tick % 2 == 1
         frame = (
-            geese[("projectile", f"geese_raging_storm_s{pillar_mappings[elapsed]}")]
+            geese.projectile(
+                f"geese_raging_storm_s{pillar_mappings[elapsed]}", -18, 0
+            )
             if show_pillar
-            else geese[("raging_storm_s", body_frame)]
+            else (geese[("raging_storm_s", body_frame)], 0, 0)
         )
-        geese_states.append((frame, 0, 0))
-    geese_order, geese_offsets, _, geese_step_ticks, geese_starts = rle_source_timeline(
-        geese_states
-    )
+        geese_states.append(frame)
+    (
+        geese_order,
+        geese_offsets,
+        geese_y_offsets,
+        geese_step_ticks,
+        geese_starts,
+    ) = rle_source_timeline(geese_states)
 
-    for name, order, offsets, durations, timing in (
-        ("Iori", iori_order, iori_offsets, iori_durations, None),
-        ("Mr_Karate", karate_order, karate_offsets, None, None),
-        ("Terry", terry_order, terry_offsets, None, terry_timing),
-        ("Ryo", ryo_order, ryo_offsets, None, None),
-        ("Robert", robert_order, robert_offsets, None, None),
-        ("Goenitz", goenitz_order, goenitz_offsets, goenitz_durations, None),
+    for name, order, offsets, y_offsets, durations, timing in (
+        ("Iori", iori_order, iori_offsets, iori_y_offsets, iori_durations, None),
+        ("Mr_Karate", karate_order, karate_offsets, karate_y_offsets, None, None),
+        ("Terry", terry_order, terry_offsets, terry_y_offsets, None, terry_timing),
+        ("Ryo", ryo_order, ryo_offsets, None, None, None),
+        ("Robert", robert_order, robert_offsets, None, None, None),
+        (
+            "Goenitz",
+            goenitz_order,
+            goenitz_offsets,
+            goenitz_y_offsets,
+            goenitz_durations,
+            None,
+        ),
     ):
         entry = {
             "animation": VIRTUAL_ANIMATION,
             "order": order,
             "x_offsets": offsets,
         }
+        if y_offsets is not None:
+            entry["y_offsets"] = y_offsets
         if durations is not None:
             entry["durations_ms"] = durations
         if timing is not None:
@@ -536,6 +649,7 @@ def main() -> None:
         "animation": VIRTUAL_ANIMATION,
         "order": geese_order,
         "x_offsets": geese_offsets,
+        "y_offsets": geese_y_offsets,
         "sampling_required_frames": [
             geese[("projectile", f"geese_raging_storm_s{index}")]
             for index in range(4)

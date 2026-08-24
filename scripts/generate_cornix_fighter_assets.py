@@ -194,8 +194,15 @@ def adapt_timed_playback(
     timing: dict[str, object],
     source_ticks_per_display_frame: int,
     context: str,
+    allow_source_frame_drop: bool = False,
 ) -> dict[str, object]:
-    """Sample a 59.7275 Hz ROM timeline into deterministic OLED display slots."""
+    """Quantize a 59.7275 Hz ROM timeline into deterministic display slots.
+
+    The default path preserves every logical state transition.  A one-tick ROM
+    state therefore owns one complete display slot at N source ticks/slot.  The
+    optional sampling path retains the older wall-clock-preserving behaviour
+    for callers that explicitly accept source-frame loss.
+    """
     if not 1 <= source_ticks_per_display_frame <= 16:
         raise ValueError(f"{context} source ticks per display frame must be in 1..16")
 
@@ -212,47 +219,56 @@ def adapt_timed_playback(
         sum(step_ticks[: int(return_step)]) if return_step is not None else None
     )
 
-    sampled_steps: list[int] = []
-    window_ticks: list[int] = []
-    sampled_windows: list[tuple[int, int]] = []
     required_frames = set(entry.get("sampling_required_frames", []))
-    sampled_required_frames: set[int] = set()
-
-    for window_index, start in enumerate(
-        range(0, total_ticks, source_ticks_per_display_frame)
-    ):
-        end = min(start + source_ticks_per_display_frame, total_ticks)
-        preferred_tick = min(
-            start + window_index % source_ticks_per_display_frame,
-            end - 1,
-        )
-        selected_tick = preferred_tick
-        # A simple phase rotation can still alias a four-state D/S projectile.
-        # Composite plans name each low-frame effect that must survive sampling;
-        # select an unseen required frame when its window first offers one.
-        unseen_candidates = [
-            tick
-            for tick in range(start, end)
-            if entry["order"][source_steps[tick]]
-            in required_frames - sampled_required_frames
-        ]
-        if unseen_candidates:
-            selected_tick = min(
-                unseen_candidates,
-                key=lambda tick: (tick - preferred_tick) % (end - start),
+    sampled_steps: list[int]
+    display_step_ticks: list[int]
+    sampled_windows: list[tuple[int, int]] = []
+    if allow_source_frame_drop:
+        sampled_steps = []
+        display_step_ticks = []
+        sampled_required_frames: set[int] = set()
+        for window_index, start in enumerate(
+            range(0, total_ticks, source_ticks_per_display_frame)
+        ):
+            end = min(start + source_ticks_per_display_frame, total_ticks)
+            preferred_tick = min(
+                start + window_index % source_ticks_per_display_frame,
+                end - 1,
             )
-        if start == 0:
-            selected_tick = 0
-        elif start <= recovery_tick < end:
-            selected_tick = recovery_tick
-        elif return_tick is not None and start <= return_tick < end:
-            selected_tick = return_tick
-        elif end == total_ticks:
-            selected_tick = total_ticks - 1
-        sampled_steps.append(source_steps[selected_tick])
-        sampled_required_frames.add(entry["order"][source_steps[selected_tick]])
-        window_ticks.append(end - start)
-        sampled_windows.append((start, end))
+            selected_tick = preferred_tick
+            unseen_candidates = [
+                tick
+                for tick in range(start, end)
+                if entry["order"][source_steps[tick]]
+                in required_frames - sampled_required_frames
+            ]
+            if unseen_candidates:
+                selected_tick = min(
+                    unseen_candidates,
+                    key=lambda tick: (tick - preferred_tick) % (end - start),
+                )
+            if start == 0:
+                selected_tick = 0
+            elif start <= recovery_tick < end:
+                selected_tick = recovery_tick
+            elif return_tick is not None and start <= return_tick < end:
+                selected_tick = return_tick
+            elif end == total_ticks:
+                selected_tick = total_ticks - 1
+            sampled_steps.append(source_steps[selected_tick])
+            sampled_required_frames.add(entry["order"][source_steps[selected_tick]])
+            display_step_ticks.append(end - start)
+            sampled_windows.append((start, end))
+    else:
+        sampled_steps = list(range(len(entry["order"])))
+        display_step_ticks = [
+            math.ceil(ticks / source_ticks_per_display_frame)
+            * source_ticks_per_display_frame
+            for ticks in step_ticks
+        ]
+        sampled_required_frames = {
+            entry["order"][step] for step in sampled_steps
+        }
 
     if len(sampled_steps) > 127:
         raise ValueError(
@@ -270,7 +286,7 @@ def adapt_timed_playback(
     adapted: dict[str, object] = {
         "animation": entry["animation"],
         "order": [entry["order"][step] for step in sampled_steps],
-        "durations_ms": gb_logic_durations(window_ticks),
+        "durations_ms": gb_logic_durations(display_step_ticks),
         "timing": timing,
     }
     if required_frames:
@@ -278,30 +294,49 @@ def adapt_timed_playback(
 
     movement_steps = entry.get("movement_steps")
     if movement_steps is not None:
-        sampled_movement = [0]
-        for previous_step, step in zip(sampled_steps, sampled_steps[1:]):
-            sampled_movement.append(
-                int(
-                    step > previous_step
-                    and any(movement_steps[previous_step + 1 : step + 1])
+        if allow_source_frame_drop:
+            sampled_movement = [0]
+            for previous_step, step in zip(sampled_steps, sampled_steps[1:]):
+                sampled_movement.append(
+                    int(
+                        step > previous_step
+                        and any(movement_steps[previous_step + 1 : step + 1])
+                    )
                 )
-            )
+        else:
+            sampled_movement = [movement_steps[step] for step in sampled_steps]
         adapted["movement_steps"] = sampled_movement
         if return_tick is not None:
-            adapted["return_step"] = next(
-                index for index, (start, end) in enumerate(sampled_windows)
-                if start <= return_tick < end
-            )
+            if allow_source_frame_drop:
+                adapted["return_step"] = next(
+                    index for index, (start, end) in enumerate(sampled_windows)
+                    if start <= return_tick < end
+                )
+            else:
+                adapted["return_step"] = int(return_step)
 
     for key in ("x_offsets", "y_offsets"):
         values = entry.get(key)
         if values is not None:
             adapted[key] = [values[step] for step in sampled_steps]
 
-    sampled_display_slots = len(adapted["order"])
+    sampled_display_slots = (
+        len(sampled_steps)
+        if allow_source_frame_drop
+        else sum(
+            ticks // source_ticks_per_display_frame for ticks in display_step_ticks
+        )
+    )
     return_slot = adapted.get("return_step")
-    can_merge_holds = "movement_steps" in adapted or "x_offsets" in adapted
-    if can_merge_holds:
+    recovery_source_step = int(timing["recovery"]["start_step"])
+    if allow_source_frame_drop:
+        recovery_slot = next(
+            index for index, (start, end) in enumerate(sampled_windows)
+            if start <= recovery_tick < end
+        )
+    else:
+        recovery_slot = recovery_source_step
+    if adapted["order"]:
         compressed: dict[str, list[int]] = {
             "order": [],
             "durations_ms": [],
@@ -316,9 +351,11 @@ def adapt_timed_playback(
             for key in ("x_offsets", "y_offsets"):
                 if key in adapted:
                     same_state = same_state and compressed[key][-1] == adapted[key][slot]
-            if movement is not None and movement[slot]:
-                same_state = False
-            if return_slot is not None and slot == return_slot:
+            if movement is not None:
+                same_state = same_state and not movement[slot]
+                if compressed["movement_steps"]:
+                    same_state = same_state and not compressed["movement_steps"][-1]
+            if slot in (return_slot, recovery_slot):
                 same_state = False
             if same_state:
                 compressed["durations_ms"][-1] += adapted["durations_ms"][slot]
@@ -339,6 +376,7 @@ def adapt_timed_playback(
         adapted["durations_ms"],
         source_ticks_per_display_frame,
         sampled_display_slots,
+        allow_source_frame_drop,
     )
     return adapted
 
@@ -348,6 +386,7 @@ def timing_report(
     durations_ms: list[int],
     source_ticks_per_display_frame: int,
     sampled_display_slots: int,
+    allow_source_frame_drop: bool,
 ) -> dict[str, int | str]:
     startup_step = int(timing["startup"]["step"])
     recovery_step = int(timing["recovery"]["start_step"])
@@ -368,6 +407,7 @@ def timing_report(
         "sampled_display_slots": sampled_display_slots,
         "playback_steps": len(durations_ms),
         "collapsed_hold_slots": sampled_display_slots - len(durations_ms),
+        "source_frame_drop_enabled": int(allow_source_frame_drop),
         "startup_ticks": startup_ticks,
         "body_ticks": total_ticks - startup_ticks - recovery_ticks,
         "recovery_ticks": recovery_ticks,
@@ -378,6 +418,7 @@ def timing_report(
         - gb_logic_ms(startup_ticks),
         "recovery_ms": gb_logic_ms(total_ticks)
         - gb_logic_ms(total_ticks - recovery_ticks),
+        "source_total_ms": gb_logic_ms(total_ticks),
         "total_ms": sum(durations_ms),
     }
 
@@ -516,6 +557,7 @@ def load_playback_plan(
     path: Path | None,
     available: dict[str, object],
     source_ticks_per_display_frame: int = DEFAULT_SOURCE_TICKS_PER_DISPLAY_FRAME,
+    allow_source_frame_drop: bool = False,
 ) -> dict[tuple[str, str], dict[str, object]]:
     if path is None:
         return {}
@@ -657,12 +699,14 @@ def load_playback_plan(
                         f"{context} y_offsets must contain exactly {len(validated_order)} steps"
                     )
                 for position, offset in enumerate(y_offsets):
-                    if not isinstance(offset, int) or isinstance(offset, bool) or offset not in (0, -10):
+                    if (
+                        not isinstance(offset, int)
+                        or isinstance(offset, bool)
+                        or not -127 <= offset <= 127
+                    ):
                         raise ValueError(
-                            f"{context} y_offsets[{position}]={offset!r}; expected 0 or -10"
+                            f"{context} y_offsets[{position}]={offset!r} is outside -127..127"
                         )
-                if -10 not in y_offsets:
-                    raise ValueError(f"{context} y_offsets must contain an airborne -10 step")
                 validated_y_offsets = list(y_offsets)
             durations_ms = entry.get("durations_ms")
             timing = entry.get("timing")
@@ -732,6 +776,7 @@ def load_playback_plan(
                     validated_timing,
                     source_ticks_per_display_frame,
                     context,
+                    allow_source_frame_drop,
                 )
             elif validated_durations_ms is not None:
                 result_entry["durations_ms"] = validated_durations_ms
@@ -836,7 +881,15 @@ def main() -> None:
         type=int,
         default=DEFAULT_SOURCE_TICKS_PER_DISPLAY_FRAME,
         metavar="COUNT",
-        help="sample each ROM-timed action once per COUNT 59.7275 Hz source ticks (default: 2)",
+        help=(
+            "quantize each ROM-timed state to COUNT 59.7275 Hz source ticks "
+            "without dropping states (default: 2)"
+        ),
+    )
+    parser.add_argument(
+        "--allow-source-frame-drop",
+        action="store_true",
+        help="opt in to wall-clock-preserving source-window sampling",
     )
     parser.add_argument("--profile-label", default="manual")
     parser.add_argument("--idle-animation")
@@ -866,6 +919,7 @@ def main() -> None:
         args.playback_plan,
         available,
         args.source_ticks_per_display_frame,
+        args.allow_source_frame_drop,
     )
     requested = args.characters or ["Kyo"]
     characters = list(available) if requested == ["all"] else requested
@@ -975,7 +1029,10 @@ def main() -> None:
             scaled_width = math.ceil((source_right - source_left) * scale_num / scale_den)
             scaled_height = math.ceil(source_height * scale_num / scale_den)
             canvas_width = max(CANVAS_W, scaled_width) if sequence in ("mid", "fast") else CANVAS_W
-            canvas_height = CANVAS_H
+            # Battle actions are bottom-aligned by the runtime.  Omitting their
+            # uniform transparent top rows therefore preserves every screen
+            # coordinate while reducing the I1 payload kept in Flash.
+            canvas_height = scaled_height if sequence in ("mid", "fast") else CANVAS_H
             output_left = (canvas_width - scaled_width) // 2
             output_top = canvas_height - scaled_height
             generated_symbols = []

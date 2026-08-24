@@ -106,6 +106,13 @@
       "origin_x": -10,
       "origin_y": -64
     },
+    "goenitz_tornado_mid": {
+      "file": "goenitz_tornado_mid.bmp",
+      "width": 8,
+      "height": 128,
+      "origin_x": -4,
+      "origin_y": -64
+    },
     "goenitz_tornado_b": {
       "file": "goenitz_tornado_b.bmp",
       "width": 10,

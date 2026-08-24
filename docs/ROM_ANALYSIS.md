@@ -36,7 +36,10 @@ Dongle 不移植战斗状态机。生成期把已选路径展开为 frame、X/Y�
 - Athena Shining Crystal Bit 收录 swirl 与三张 thrown 映射；charge projectile code 明注
   跨玩家隔帧执行，即对象路径本已约 30Hz。
 - Geese Raging Storm S 光柱寿命 `$3C` source ticks，初速 0；余寿命小于 `$10` 改速 1，
-  小于 `$08` 改速 2，四张 mapping 由生成器有限模拟。
+  小于 `$08` 改速 2，四张 mapping 由生成器有限模拟；对象表的 XOffset／XFLIP 转为
+  左右相位，非翻转两相及翻转两相仍分别复用同一 I1 payload。
+- Goenitz Yonokaze 三张 mapping 均从对象表提取；左／中／右相位与举起人物帧交替两轮，
+  不把不同 mapping 归一到同一坐标。
 - Mr Karate 采用隐藏成功路径
   `RyukoRanbuS -> Zenretsuken -> RyukoRanbuD3 -> HaohShoukouKenD`。D3 后跳 mapping
   保持 2/13/1 ticks，并以 `vH=-$0600`、`vV=-$0300`、gravity `+$0060` 求多级位移；
@@ -45,32 +48,34 @@ Dongle 不移植战斗状态机。生成期把已选路径展开为 frame、X/Y�
 ## 60Hz 源时钟与 30Hz 显示
 
 所有已迁移 mid/fast 的 `timing.clock` 为 `gb-vblank`。生成器先展开 59.7275Hz source
-timeline，再按 `--source-ticks-per-display-frame N` 分窗。默认 N=2，目标约 29.86375Hz；
-N 可为 1..16。参数降低显示更新数，不改变源分支总 ticks 或累计毫秒。
+timeline，再按 `--source-ticks-per-display-frame N` 量化。默认 N=2，目标约 29.86375Hz；
+N 可为 1..16。默认路径让每一逻辑状态至少占一个完整显示槽，故不删源帧；短于 N tick
+的状态会拉长。只有显式 `--allow-source-frame-drop` 才以分窗抽样换取 ROM 原墙钟时长。
 
 采样后若相邻槽的最终 I1 图、X/Y 与移动语义相同，便把 duration 合并；故报告同时记录
-ROM ticks、`sampled_display_slots`、`playback_steps` 与 `collapsed_hold_slots`。图片数据按
+ROM ticks、`source_total_ms`、`sampled_display_slots`、`playback_steps`、`total_ms` 与
+`collapsed_hold_slots`。图片数据按
 最终 `(width,height,I1 bytes)` 在同一角色四档间去重，mid 与 fast 复用同图时只发出一个
 Flash payload。所有图、描述符与表为 `static const`，无运行时解压或合成画布。
 
 默认 N=2 的 fast 摘要：
 
-| 人物 | ROM ticks | 采样槽 | Provider 步 | 总时长 ms |
-|---|---:|---:|---:|---:|
-| Kyo | 59 | 30 | 20 | 988 |
-| Daimon | 217 | 109 | 24 | 3633 |
-| Terry | 199 | 100 | 54 | 3332 |
-| Andy | 58 | 29 | 6 | 971 |
-| Ryo | 102 | 51 | 23 | 1708 |
-| Robert | 92 | 46 | 22 | 1540 |
-| Athena | 137 | 69 | 63 | 2294 |
-| Mai | 51 | 26 | 17 | 854 |
-| Orochi Leona | 82 | 41 | 22 | 1373 |
-| Geese | 83 | 42 | 31 | 1390 |
-| Krauser | 26 | 13 | 13 | 435 |
-| Goenitz | 69 | 35 | 19 | 1155 |
-| Mr Karate | 132 | 66 | 36 | 2210 |
-| Orochi Iori | 66 | 33 | 21 | 1105 |
+| 人物 | ROM ticks | 显示槽 | Provider 步 | 源时长 ms | 实播 ms |
+|---|---:|---:|---:|---:|---:|
+| Kyo | 59 | 47 | 36 | 988 | 1574 |
+| Daimon | 217 | 116 | 27 | 3633 | 3884 |
+| Terry | 199 | 152 | 105 | 3332 | 5090 |
+| Andy | 58 | 31 | 6 | 971 | 1038 |
+| Ryo | 102 | 53 | 35 | 1708 | 1775 |
+| Robert | 92 | 48 | 30 | 1540 | 1607 |
+| Athena | 137 | 131 | 126 | 2294 | 4387 |
+| Mai | 51 | 42 | 33 | 854 | 1406 |
+| Orochi Leona | 82 | 55 | 34 | 1373 | 1842 |
+| Geese | 83 | 73 | 63 | 1390 | 2444 |
+| Krauser | 26 | 16 | 6 | 435 | 536 |
+| Goenitz | 69 | 42 | 23 | 1155 | 1406 |
+| Mr Karate | 132 | 85 | 64 | 2210 | 2846 |
+| Orochi Iori | 66 | 51 | 37 | 1105 | 1708 |
 
 ## 复现
 

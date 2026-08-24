@@ -50,9 +50,11 @@ Cornix 启用 generated-provider 模式。`scripts/cache_cornix_fighter_provider
 已迁移的 mid／fast 可另带严格 `timing`：其中记录反汇编 revision、Move ID、动作表、move／
 projectile code、选定分支、Super Sparkle 是否并行、hitstop 归属、逐步 `step_ticks`、起手
 与收招边界。生成器依约 59.7275Hz 展开源状态，再以
-`--source-ticks-per-display-frame N` 降采样；默认 N=2，目标约 29.864Hz。累计墙钟时长仍
-等于 ROM 分支总 tick，不随 N 改变。相同最终图、位置及移动语义的连续槽会合并为一次
-较长保持；报告分别列源 tick、采样槽、最终播放步及合并槽。预览器加
+`--source-ticks-per-display-frame N` 量化；默认 N=2，目标约 29.864Hz。默认路径保证每个
+逻辑状态至少占一个完整显示槽，故一 tick 的人物／道具／隐藏态亦不会因偶奇相位消失；
+此类短态会依原版死亡慢放式显示而拉长。只有显式传入 `--allow-source-frame-drop` 才按
+窗口抽样并维持 ROM 墙钟时长。相同最终图、位置及移动语义的连续槽会合并为一次较长
+保持；报告分别列源 tick、源时长、显示槽、最终播放步、显示时长及合并槽。预览器加
 `--details-json FILE` 可输出同一报告。
 
 动作还可用与 `order` 等长的 `movement` 指定每步为 `fixed` 或 `move`。首步必须 fixed；fixed 保持前一 X，move 方推进一个等分，最后一个 move 精确到达 action 目标。省略此字段则保持旧行为，即除首步外每步皆移动。Kyo MAX 大蛇薙以蓄力及准备步骤 fixed、四个释放步骤 move，避免蓄力循环期间人物滑行。
@@ -98,6 +100,8 @@ python scripts/render_fighter_gif.py --character Mr_Karate --sequence fast \
   辨识度且在 OLED 上可读的招式，再映射至档位。
 - mid 与 fast 可均匀抽帧，但必须保留起势、关键打击／释放、转折、收招与落地。
   有显式 `order` 时，以 ROM 原始帧索引为准，禁止先抽样再对临时索引编排。
+- 默认 30Hz 量化只改每步时长，不得改 `order`、图片、位移或飞行物相位；若为容量测试
+  确需丢源帧，必须显式启用 `--allow-source-frame-drop`，且验收不得与默认固件混称。
 - 缩放应覆盖所选帧的联合边界；允许宽度超过 64px，不得为塞入 64px 而裁掉人物、
   火焰或飞行道具内容。高度超过 64px 时按联合边界等比缩放。
 - 重复帧只重复 descriptor 指针，不复制 bitmap。新增循环前先核唯一图片增量，避免
@@ -127,6 +131,9 @@ python scripts/render_fighter_gif.py --character Mr_Karate --sequence fast \
 - 闪烁必须保留无火焰的人物帧。连续重复火焰图会变成常亮，不再具有原作爆炸节奏。
 - 飞行道具的位置应来自 ROM 规则或明确的有限演示落点；若原作使用随机位置，应记录
   演示采用预定位置，不伪称复现随机数状态机。
+- 合成时人物的多段动作（如乱舞、升龙、后跳、收招）须共用一组联合边界与缩放；逐段
+  各自居中会令同一角色忽大忽小或跳位。飞行物各 mapping 的原点差须转为只读 X/Y
+  相位表，不得因逐图归一化而把吉斯左右光柱或暴风旋风叠到同一坐标。
 
 ### 时长与动作边界
 
@@ -134,12 +141,13 @@ python scripts/render_fighter_gif.py --character Mr_Karate --sequence fast \
   中间每播放步骤 200ms。不要另加与动作 timer 竞争的最短展示 timer。
 - 上述 500／200ms 仅为无逐步时长表的通用 cadence。飞行道具若 ROM 明载 instant
   映射、对象寿命或被后枚覆盖时刻，须用与 `order` 等长的 `durations_ms`；不可仍以
-  每步 200ms 播放。已迁移 mid／fast 默认每两个 59.7275Hz source ticks 取一显示状态，
-  目标约 29.864Hz；总时长由 source tick 累计换算，不再作额外四倍拉伸。每项须为
-  1..65535ms，总和须等于 action 总时长。
-- 降采样不可固定取全偶或全奇 tick；采样相位轮换，并强制保留起手、return、recovery、
-  末态及复合计划所列 `sampling_required_frames`。若选定 N 无法容纳必保变体，生成期失败，
-  不静默把 D/S、光柱或 thrown 映射删掉。
+  每步 200ms 播放。已迁移 mid／fast 默认令每一逻辑状态占满两个 59.7275Hz source ticks，
+  目标约 29.864Hz；原来仅一 tick 的状态会扩为约 33.5ms，原来三 tick 的状态会扩为四
+  tick。每项须为 1..65535ms，总和须等于量化后的 action 显示时长。
+- 默认量化不得删去任何 `order` 状态；报告中的 `source_total_ms` 保留 ROM 分支基线，
+  `total_ms` 则是 OLED 实播时长。显式丢帧模式方可使用轮换窗口与
+  `sampling_required_frames`；若所选 N 无法容纳必保变体，生成期失败，不静默删去 D/S、
+  光柱或 thrown 映射。
 - 重复步骤属于动作总时长。动作结束只发生在末帧完整停留后；NEXT、降档、换人、
   集气奖励和 fast 门控皆在此边界处理。
 - 被 WPM 升档打断的 slow／mid 不算完整动作，不得加气。普通集气模式完整 slow `+5`、
@@ -225,9 +233,10 @@ WPM band 升高时立即抢占，降低时等待当前动作结束。动作总�
 
 ### 当前实现边界（2026-08-23）
 
-- Provider ABI 已为 v8；action 可带 `frame_durations_ms` 与只读 `frame_y_offsets`。腾空表
-  仅取 `0/-10px`，直接叠加既有 origin，不增 LVGL object、timer 或堆内存；旧宏省略该
-  字段仍为 NULL。首项从图片绘制完成后起计，生成器与 GIF 读取同一时长及 Y 表。
+- Provider ABI 已为 v8；action 可带 `frame_durations_ms` 与只读 `frame_y_offsets`。人物
+  腾空仍取 `0/-10px`；飞行物另可用有符号 int8 Y 相位保存对象表原点。两者皆直接叠加
+  既有 origin，不增 LVGL object、timer 或堆内存；旧宏省略该字段仍为 NULL。首项从图片
+  绘制完成后起计，生成器与 GIF 读取同一时长及 Y 表。
 - 生产十四角 fast 皆已记录 revision、动作表、move code、成功分支、逐步 tick 及末帧
   硬直；Andy、Ryo、Robert、Athena、Mai、Orochi Leona、Mr Karate 之 ROM 确认腾空段上移
   10px，其余七角不由图片边界猜测腾空。
@@ -239,11 +248,32 @@ WPM band 升高时立即抢占，降低时等待当前动作结束。动作总�
 ### 独立模块与 30Hz 降采样重验（2026-08-24）
 
 Provider 已移入 `zmk-dongle-fighter-theme`；Cornix、dongle demo 与 EvalKit 皆从模块脚本
-生成。两项 OpenSpec strict 校验及 35 项宿主测试通过；Athena 四种 Shining Crystal Bit、
-Geese 四种 Raging Storm 光柱、Mr Karate Haoh D/S 均列入必保采样帧。默认 N=2，N=4
-亦可生成；N=8 因 Mr Karate S 图无法在该密度保留而明确失败。
+生成。默认 N=2 保留全部计划状态；N=4、N=8 亦不删图，只进一步拉长短态。显式
+`--allow-source-frame-drop` 方沿用窗口采样；其 N=8 因 Mr Karate S 图无法在该密度保留而
+明确失败。37 项宿主测试另覆盖全部 timed mid/fast 的位图集合不丢失、复合相位及 GIF。
 
-`eighteen` 历史 profile 实启十四角。当前 manifest 为 526 logical、417 unique、109 次
+2026-08-24 同日修正：Geese 四光柱由对象表原点形成 `-36/0/-24/-13px` 左右相位，同形
+非翻转／翻转图各自复用；Athena 蓄球置于手侧后向前抛；Goenitz 补齐对象表中间旋风，
+以左／中／右三位与举起帧交替两轮；Mr Karate、Ryo、Robert 等多段人物动作改用共享
+联合边界，避免换段缩放跳变。mid/fast I1 删去战斗层底对齐下等价的透明顶部行，屏上
+坐标不变；当前实启 293 unique、156311B I1，仍低于 301 帧／156520B 既有闸值。
+此数专指生成器默认十三角；构建所用历史名 `eighteen` profile 实启十四角（另含
+Mr Karate），为 330 unique、175295B I1。二者不可混作同一 roster 的前后比较。
+
+同日以项目本地 Nix 串行重建。`eighteen` manifest 为 428 logical、330 unique、
+175295B I1、7920B descriptor；宿主 37 项 Python 测试、动画数学 C 测试与两项 OpenSpec
+strict 校验皆过。最终链接与产物为：
+
+| 目标 | Flash used / region | SRAM image / total | 余 Flash | 余 SRAM | UF2 SHA-256 |
+|---|---:|---:|---:|---:|---|
+| `wave-dongle-animation` | 600436 / 1048576 B | 92556 / 262144 B | 448140 B | 169588 B | `0854f3c9d1460e69b59474602d294d57fed16d7036d71e169d3f2ee9b0262c03` |
+| `cornix_dongle` | 731836 / 864256 B | 139644 / 262144 B | 132420 B | 122500 B | `70a377cc27f59bef9576e214f19ff915610c77e673ac3de5f522dd0320eb85d3` |
+
+相较下列首次模块迁移构建，Flash 因保留原先误删的短态及新增相位表而增加约 17KiB，
+SRAM 数值完全相同；两目标仍有明确余量。此为静态／构建证据，未刷写，实屏节奏另验。
+
+以下为修正前首次模块迁移记录：`eighteen` 历史 profile 实启十四角；当时 manifest 为
+526 logical、417 unique、109 次
 图片去重、227720B 全素材 I1；实启部分为 372 logical、296 unique、160960B I1、7104B
 descriptor，最终 866 播放步骤。与下列 2026-08-23 基线相比，实启 I1 少 13904B，
 descriptor 少 624B。

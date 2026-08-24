@@ -118687,6 +118687,19 @@
               "sources": [
                 [
                   "projectile",
+                  "goenitz_tornado_mid"
+                ]
+              ]
+            },
+            {
+              "file": "013.bmp",
+              "width": 64,
+              "height": 64,
+              "origin_x": 0,
+              "origin_y": 0,
+              "sources": [
+                [
+                  "projectile",
                   "goenitz_tornado_b"
                 ]
               ]

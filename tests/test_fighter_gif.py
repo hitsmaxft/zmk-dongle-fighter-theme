@@ -47,8 +47,8 @@ class FighterGifTest(unittest.TestCase):
             )
             data = output.read_bytes()
 
-        self.assertEqual(data.count(b"\x21\xf9\x04"), 22)
-        self.assertIn("22 steps/1373ms, 18 moving", result.stdout)
+        self.assertEqual(data.count(b"\x21\xf9\x04"), 34)
+        self.assertIn("34 steps/1842ms, 30 moving", result.stdout)
 
     def test_kyo_custom_sequence_gif_has_firmware_delays(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -79,15 +79,16 @@ class FighterGifTest(unittest.TestCase):
         self.assertTrue(data.startswith(b"GIF89a"))
         self.assertTrue(data.endswith(b";"))
         controls = data.split(b"\x21\xf9\x04")[1:]
-        self.assertEqual(len(controls), 20)
+        self.assertEqual(len(controls), 36)
         delays = [int.from_bytes(control[1:3], "little") for control in controls]
-        self.assertTrue(set(delays).issubset({1, 3, 4, 13, 14, 15, 16}))
+        self.assertGreaterEqual(min(delays), 3)
         self.assertEqual(report["timing_report"]["total_ticks"], 59)
         self.assertEqual(report["timing_report"]["source_ticks_per_display_frame"], 2)
         self.assertEqual(report["timing_report"]["target_hz_millihertz"], 29864)
-        self.assertEqual(report["timing_report"]["sampled_display_slots"], 30)
-        self.assertEqual(report["timing_report"]["collapsed_hold_slots"], 10)
-        self.assertEqual(report["timing_report"]["total_ms"], 988)
+        self.assertEqual(report["timing_report"]["sampled_display_slots"], 47)
+        self.assertEqual(report["timing_report"]["collapsed_hold_slots"], 11)
+        self.assertEqual(report["timing_report"]["source_total_ms"], 988)
+        self.assertEqual(report["timing_report"]["total_ms"], 1574)
         self.assertIn("4 moving", result.stdout)
 
     def test_terry_hidden_max_gif_uses_replacing_geyser_timeline(self):
@@ -116,8 +117,8 @@ class FighterGifTest(unittest.TestCase):
             data = output.read_bytes()
             report = json.loads(details.read_text(encoding="utf-8"))
 
-        self.assertEqual(data.count(b"\x21\xf9\x04"), 54)
-        self.assertIn("54 steps/3332ms, 44 moving", result.stdout)
+        self.assertEqual(data.count(b"\x21\xf9\x04"), 105)
+        self.assertIn("105 steps/5090ms, 102 moving", result.stdout)
         controls = data.split(b"\x21\xf9\x04")[1:]
         delays = [int.from_bytes(control[1:3], "little") for control in controls]
         self.assertTrue({3, 4}.issubset(delays))
@@ -126,9 +127,33 @@ class FighterGifTest(unittest.TestCase):
         self.assertEqual(report["timing_report"]["body_ticks"], 117)
         self.assertEqual(report["timing_report"]["recovery_ticks"], 61)
         self.assertEqual(report["timing_report"]["source_ticks_per_display_frame"], 2)
-        self.assertEqual(report["timing_report"]["sampled_display_slots"], 100)
-        self.assertEqual(report["timing_report"]["collapsed_hold_slots"], 46)
-        self.assertEqual(report["timing_report"]["total_ms"], 3332)
+        self.assertEqual(report["timing_report"]["sampled_display_slots"], 152)
+        self.assertEqual(report["timing_report"]["collapsed_hold_slots"], 47)
+        self.assertEqual(report["timing_report"]["source_total_ms"], 3332)
+        self.assertEqual(report["timing_report"]["total_ms"], 5090)
+
+    def test_composite_projectile_phase_offsets_render(self):
+        for character in ("Athena", "Goenitz", "Mr_Karate"):
+            with self.subTest(character=character), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / f"{character}.gif"
+                subprocess.run(
+                    [
+                        sys.executable,
+                        str(RENDERER),
+                        "--character",
+                        character,
+                        "--sequence",
+                        "fast",
+                        "--scale",
+                        "1",
+                        "--output",
+                        str(output),
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertTrue(output.read_bytes().startswith(b"GIF89a"))
 
     def test_cli_order_overrides_the_project_plan(self):
         with tempfile.TemporaryDirectory() as directory:

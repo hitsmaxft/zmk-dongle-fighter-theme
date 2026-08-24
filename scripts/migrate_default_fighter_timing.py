@@ -370,11 +370,17 @@ def apply_migration(document: dict[str, object]) -> None:
     )
 
     set_timing(
-        characters, "Goenitz", [2] * 4 + [3] * 3 + [5] * 8 + [3] * 4, 15,
+        characters,
+        "Goenitz",
+        [2] * 4 + [3] * 3 + [4, 3, 3] * 4 + [3] * 4,
+        19,
         move="MOVE_GOENITZ_SHINYAOTOME_JISSOUKOKU_DL -> THROW_H/YONOKAZE",
         table="src/bank03.asm:MoveAnimTbl_Goenitz",
         code="src/bank0A.asm:MoveC_Goenitz_ShinyaotomeJissoukokuDL",
-        branch="successful rush, lifted throw pose, two deterministic Yonokaze rounds",
+        branch=(
+            "successful rush, lifted throw pose, two deterministic "
+            "three-phase Yonokaze rounds"
+        ),
         projectile="src/bank08.asm:ProjC_Goenitz_Yonokaze",
     )
 

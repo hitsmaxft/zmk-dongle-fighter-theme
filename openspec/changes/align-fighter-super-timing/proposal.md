@@ -11,15 +11,20 @@ Mr Karate 龙虎乱舞末段后跳亦未依原重力逐 tick 复原。
 
 - 以固定反汇编 revision 的 59.7275Hz VBlank 为唯一源时钟；`FrameTotal=N` 计 `N+1`
   source ticks，记录起手、主体、飞行道具、腾空与收招硬直边界。
-- 生成器新增 `--source-ticks-per-display-frame`，默认每两个 source ticks 采一 OLED 状态，
-  目标约 29.864Hz；参数只改变采样密度，不改变所选 ROM 路径的累计墙钟时长。
+- 生成器新增 `--source-ticks-per-display-frame`，默认每两个 source ticks 为一 OLED 槽，
+  目标约 29.864Hz；默认保留每个逻辑状态并量化其时长。旧分窗抽样改为显式
+  `--allow-source-frame-drop`，不得静默删去人物或飞行物状态。
 - mid 与 fast 共用 schema v2 时间证据；默认生产角色之 mid 不再使用通用 cadence。
 - 补入 Athena Shining Crystal Bit 四幅映射与 Geese Raging Storm 四幅光柱映射，并按
   原 projectile code 的寿命及动态速度生成有限时间线。
+- 补入 Goenitz Yonokaze 第三幅映射；复合人物各段共享边界与比例，飞行物的对象表原点
+  转为只读 X/Y 相位，避免换段跳位及不同 mapping 重叠。
 - 复原 Mr Karate `RyukoRanbuS -> Zenretsuken -> RyukoRanbuD3 -> HaohShoukouKenD`；
   D3 后跳按 `vH=-$0600`、`vV=-$0300`、重力 `+$0060` 逐 tick 求位移后降采样。
 - 对采样后连续相同的最终 I1 图、X/Y 位置及移动状态作保持合并；mid/fast 的相同最终
   位图共用单一 Flash 数据，报告源 tick、采样槽与最终播放步三种计数。
+- 删除 battle 层底对齐下等价的 I1 透明顶部行，以抵消保留完整帧序带来的 Flash 增量，
+  不增加 SRAM、LVGL object 或运行时合成。
 
 ## Impact
 

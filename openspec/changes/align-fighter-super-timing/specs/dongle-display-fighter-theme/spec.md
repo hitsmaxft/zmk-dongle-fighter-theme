@@ -17,20 +17,26 @@ Each migrated Fighter mid or fast action SHALL derive its visible startup, body,
 - **AND** physics-derived landing SHALL use the source velocity and gravity values
 
 ### Requirement: Parameterized display sampling
-The generator SHALL adapt the 59.7275Hz source timeline to a configurable display update rate without changing the selected move's cumulative wall-clock duration.
+The generator SHALL adapt the 59.7275Hz source timeline to a configurable display update rate without silently removing a logical playback state.
 
 #### Scenario: Generate the default 30Hz timeline
 - **WHEN** `source_ticks_per_display_frame` is 2
 - **THEN** the nominal target rate SHALL be approximately 29.864Hz
-- **AND** the first, recovery, return, and final boundaries SHALL remain represented
-- **AND** required low-frame projectile variants SHALL remain represented rather than being erased by sampling alias
+- **AND** every planned image, X/Y position, movement, return, recovery, and final boundary SHALL remain represented in order
+- **AND** each logical state SHALL own at least one complete display slot
+- **AND** the report SHALL distinguish source wall-clock time from quantized display time
 
 #### Scenario: Lower the display frame rate
-- **WHEN** the divisor is increased within 1 through 16
-- **THEN** sampled display slots SHALL decrease
-- **AND** total source ticks and cumulative milliseconds SHALL remain unchanged
+- **WHEN** the divisor is increased within 1 through 16 without frame-drop opt-in
+- **THEN** playback state count and order SHALL remain unchanged
+- **AND** total source ticks and source milliseconds SHALL remain unchanged
+- **AND** display milliseconds MAY increase to keep short states visible
 - **AND** no action SHALL exceed the Provider playback bound after sampling
-- **AND** generation SHALL fail with the missing source-frame indices if the selected divisor cannot preserve required variants
+
+#### Scenario: Explicitly permit source-frame dropping
+- **WHEN** `allow_source_frame_drop` is enabled
+- **THEN** sampled display slots MAY decrease while source wall-clock duration remains unchanged
+- **AND** generation SHALL fail with the missing source-frame indices if the divisor cannot preserve required variants
 
 ### Requirement: Flash-oriented playback deduplication
 The generated Provider SHALL reuse identical final I1 images and collapse identical display holds without allocating a runtime image-composition buffer.
@@ -57,6 +63,13 @@ Composite moves SHALL include source-confirmed projectile mappings and source-co
 - **WHEN** Athena fast or Geese fast is generated
 - **THEN** Athena SHALL reference Shining Crystal Bit swirl and thrown mappings
 - **AND** Geese SHALL reference all Raging Storm S pillar mappings according to its 60-tick object lifetime and speed changes
+- **AND** Athena's charge SHALL remain near her hand before a finite forward throw
+- **AND** Geese's four pillar phases SHALL preserve their left/right object-table positions while equal shapes reuse bitmap payloads
+
+#### Scenario: Render Goenitz's wind phases
+- **WHEN** Goenitz fast reaches the lifted throw pose
+- **THEN** all three Yonokaze mappings SHALL appear at distinct left, middle, and right positions
+- **AND** the lifted fighter pose SHALL remain between wind appearances for two rounds
 
 #### Scenario: Render Mr Karate's ending
 - **WHEN** Mr Karate's successful hidden desperation path reaches `RyukoRanbuD3`

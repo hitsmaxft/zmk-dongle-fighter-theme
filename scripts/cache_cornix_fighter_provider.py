@@ -26,12 +26,15 @@ def input_digest(
     playback_plan: Path,
     profile: str,
     source_ticks_per_display_frame: int,
+    allow_source_frame_drop: bool,
 ) -> str:
     digest = hashlib.sha256()
-    digest.update(b"kof96-provider-cache-v3\0")
+    digest.update(b"kof96-provider-cache-v4\0")
     digest.update(profile.encode("utf-8"))
     digest.update(b"\0")
     digest.update(str(source_ticks_per_display_frame).encode("ascii"))
+    digest.update(b"\0")
+    digest.update(str(int(allow_source_frame_drop)).encode("ascii"))
     digest.update(b"\0")
     update_file_hash(
         digest, module_root, module_root / "scripts/generate_cornix_fighter_assets.py"
@@ -100,6 +103,7 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--profile", default="default")
     parser.add_argument("--source-ticks-per-display-frame", type=int, default=2)
+    parser.add_argument("--allow-source-frame-drop", action="store_true")
     args = parser.parse_args()
     if not 1 <= args.source_ticks_per_display_frame <= 16:
         parser.error("--source-ticks-per-display-frame must be in 1..16")
@@ -121,6 +125,7 @@ def main() -> None:
         playback_plan,
         args.profile,
         args.source_ticks_per_display_frame,
+        args.allow_source_frame_drop,
     )
     if output.exists() and key_file.exists() and key_file.read_text(encoding="utf-8").strip() == key:
         print(f"KOF96 provider cache hit: {key[:12]}")
@@ -148,6 +153,7 @@ def main() -> None:
                 str(playback_plan),
                 "--source-ticks-per-display-frame",
                 str(args.source_ticks_per_display_frame),
+                *(["--allow-source-frame-drop"] if args.allow_source_frame_drop else []),
                 *generator_args,
                 "--no-previews",
             ],

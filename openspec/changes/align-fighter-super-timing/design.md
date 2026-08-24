@@ -7,8 +7,9 @@ updates；move code 又可改速、循环、等待碰撞、生成 projectile 或
 故只读 OBJ pointer table 不足以复原招式，亦不可把每张导出 BMP 当作等时长。
 
 此前实现把源 tick 映为 66/67ms，动作约为原作四倍；最新目标则是显示端约 30 updates/s，
-并允许参数继续降低更新率。故源时间与显示采样必须分离：ROM 分支总 tick 决定墙钟时长，
-采样参数只决定期间画多少个状态。
+且保留原作死亡慢放式的逐状态可见性。故源时间与显示时间必须分离：ROM 分支总 tick 是
+证据基线；默认显示量化保证每一逻辑状态至少占一个 OLED 槽，短态可被拉长。若调用者明确
+接受丢帧，方可另选维持源墙钟时长的窗口抽样。
 
 ## Timing evidence model
 
@@ -40,15 +41,15 @@ mid 与 fast 均使用 schema v2：
 
 ## 60Hz to display sampling
 
-生成器先展开 source-tick state，再按 `N=--source-ticks-per-display-frame` 分窗：
+生成器先展开 source-tick state，再按 `N=--source-ticks-per-display-frame` 量化：
 
 - 默认 `N=2`，名义目标率为 `59.7275/2 = 29.86375Hz`；允许 `1..16`。
-- 每窗时长由其所含 source ticks 累计换算，故尾窗不足 N tick 亦准确。
-- 第一窗、recovery 边界、return 边界与末窗强制取对应状态，免丢起手／收招语义。
-- 普通窗轮换采样相位；复合计划另列 `sampling_required_frames`，令 D/S、光柱及 thrown
-  等低帧变体至少各入一次。若所选 N 无法容纳全部必保变体，生成期明确失败，不静默丢图。
-- 所有输出 duration 由累计 tick 换算；总毫秒等于原分支总 tick 的墙钟时长，采样参数
-  不得令动作变快或变慢。
+- 默认对每一步分配 `ceil(step_ticks/N)` 个显示槽，时长按完整槽累计；一 tick 的显示与
+  隐藏状态在 N=2 时皆可见约 33.5ms，不因偶奇相位消失。
+- `order`、图片、X/Y、movement、return 与 recovery 边界逐项保留；仅相邻完全相同的保持
+  可合并 duration。`source_total_ms` 记录 ROM 基线，`total_ms` 记录实际 OLED 时长。
+- 显式 `--allow-source-frame-drop` 才恢复分窗：第一、recovery、return、末态及
+  `sampling_required_frames` 强制保留；若 N 无法容纳必保变体则明确失败。
 
 报告同时输出：
 
@@ -56,6 +57,7 @@ mid 与 fast 均使用 schema v2：
 - `sampled_display_slots`: 降采样后的时间槽；
 - `playback_steps`: 相同保持合并后的 Provider 表长；
 - `collapsed_hold_slots`: 后两者之差。
+- `source_total_ms`／`total_ms`: ROM 基线与量化后实播时长。
 
 三者分开可防止资源优化无意删掉 ROM 时长。
 
@@ -64,14 +66,20 @@ mid 与 fast 均使用 schema v2：
 ### Athena
 
 Shining Crystal Bit charge projectile 的 update 明注为跨玩家隔帧执行，即对象更新率原已约
-30Hz。复合时间线保留旋绕图及三张 thrown 映射，按 normal-size 分支与有限 orbit／投掷
-路径交替人物／道具，不再只播人物本体。
+30Hz。复合时间线保留旋绕图及三张 thrown 映射：蓄球位于手侧，释放后以有限向前路径
+交替人物／道具，不再只播人物本体；未移植完整对手／输入状态机。
 
 ### Geese
 
 Raging Storm S 人物帧为 21/1/61 source ticks。光柱对象寿命 `$3C` tick；初始 speed 0，
 余寿命小于 `$10` 时改 speed 1，小于 `$08` 时改 speed 2。生成期模拟四 mapping 的推进，
-不在固件移植 projectile 状态机。
+并把对象表 XOffset／XFLIP 转为左右相位；同形两相仍复用 I1，不在固件移植 projectile
+状态机。
+
+### Goenitz
+
+Yonokaze 对象表有左形、中间细形、右翻转形三 mapping。复合器提取三者，以左／中／右
+相位同举起帧交替两轮；三相不得因逐图居中而落在同一坐标。
 
 ### Mr Karate
 
@@ -93,10 +101,15 @@ ticks，道具 D/S 映射与人物状态交替。
 5. 跨角色量测显示：生产十四角无相同 payload，可省 0B；全二十角的 29 组重复主要来自
    普通／暴走及千鹤／万龟克隆，理论约 15.7KiB，但彼等不入生产编译。故不增公共 gate，
    免令禁用角色素材意外编入。
+6. 多段人物动作在合成期共用联合边界与缩放；飞行物单图归一后以 int8 相位复原对象表
+   坐标，故同形 payload 可去重，且不增加运行时画布。
+7. mid/fast 战斗 action 在运行时按屏底对齐，故生成 I1 可删除统一透明顶部行；image 高度
+   随联合内容缩短而屏幕内容坐标不变，SRAM 与对象数不增。
 
 ## Validation
 
-- 宿主测试验证 schema、关键源 ticks、采样参数、墙钟恒定、保持合并及 mid/fast 图共享。
+- 宿主测试验证 schema、关键源 ticks、默认全状态保留、显式丢帧、保持合并及 mid/fast
+  图共享。
 - GIF 与 Provider 共用同一 order、位置及 duration。
 - 构建后以 manifest、ELF/map 与 Zephyr RAM/ROM 报告分别量测图片、表、Flash 与 SRAM。
 - 静态构建不冒充 SH1106/ST7789 实屏节奏验证。

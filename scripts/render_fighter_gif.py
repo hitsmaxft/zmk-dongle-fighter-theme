@@ -227,6 +227,7 @@ def render_action(
     left_battery: int,
     right_battery: int,
     source_ticks_per_display_frame: int = fighter.DEFAULT_SOURCE_TICKS_PER_DISPLAY_FRAME,
+    allow_source_frame_drop: bool = False,
 ) -> tuple[list[bytes], list[int], dict[str, object]]:
     manifest = json.loads((bitmaps / "manifest.json").read_text(encoding="utf-8"))
     available = manifest["characters"]
@@ -238,6 +239,7 @@ def render_action(
         playback_plan_path,
         available,
         source_ticks_per_display_frame,
+        allow_source_frame_drop,
     )
     playback_entry = playback_plan.get((character_name, sequence))
     animation = animation_override or (
@@ -329,8 +331,8 @@ def render_action(
     if y_offsets is not None:
         if len(y_offsets) != len(playback_order):
             raise ValueError("y offset table must match the playback order")
-        if any(offset not in (0, -10) for offset in y_offsets):
-            raise ValueError("y offsets must contain only grounded 0 or airborne -10")
+        if any(not -127 <= offset <= 127 for offset in y_offsets):
+            raise ValueError("y offsets must fit signed int8")
 
     selected_source_indices = list(dict.fromkeys(playback_order))
     selected_frames = [all_frames[index] for index in selected_source_indices]
@@ -479,6 +481,11 @@ def main() -> None:
         metavar="COUNT",
     )
     parser.add_argument(
+        "--allow-source-frame-drop",
+        action="store_true",
+        help="opt in to wall-clock-preserving source-window sampling",
+    )
+    parser.add_argument(
         "--bitmaps", type=Path, default=module_root / "assets/character_bitmaps"
     )
     playback_group = parser.add_mutually_exclusive_group()
@@ -521,6 +528,7 @@ def main() -> None:
             args.left_battery,
             args.right_battery,
             args.source_ticks_per_display_frame,
+            args.allow_source_frame_drop,
         )
         write_gif(
             args.output,

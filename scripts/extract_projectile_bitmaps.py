@@ -294,6 +294,17 @@ def main() -> None:
             "x_offset": 0,
             "y_offset": 0,
         },
+        "goenitz_tornado_mid": {
+            "ranges": [(0x0FC0, 0x22)],
+            "objects": [
+                (0x30, 0xFC, 0x0C), (0x20, 0xFC, 0x0E),
+                (0x10, 0xFC, 0x0E), (0x00, 0xFC, 0x0E),
+                (0xF0, 0xFC, 0x0E), (0xE0, 0xFC, 0x0E),
+                (0xD0, 0xFC, 0x0E), (0xC0, 0xFC, 0x0E),
+            ],
+            "x_offset": 0,
+            "y_offset": 0,
+        },
         "goenitz_tornado_b": {
             "ranges": [(0x0FC0, 0x22)],
             "objects": [
