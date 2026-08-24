@@ -1,0 +1,38 @@
+{
+  "target": "cornix_dongle",
+  "compiled_roster": {
+    "characters": 15,
+    "character_order": ["Kyo", "Daimon", "Terry", "Andy", "Ryo", "Robert", "Athena", "Mai", "Orochi_Leona", "Geese", "Krauser", "Mr_Big", "Mature", "Goenitz", "Orochi_Iori"],
+    "logical_frames": 367,
+    "unique_frames": 301,
+    "image_bytes": 156520,
+    "descriptor_bytes": 7224,
+    "max_sequence_frames": 16,
+    "lvgl_pic_count_limit": 127
+  },
+  "disabled_characters": ["Leona", "Iori", "Chizuru", "Boss_Kagura", "Mr_Karate"],
+  "color_conversion": {
+    "mode": "original ordered 2x2 dither",
+    "foreground_percent_by_index": [0, 25, 75, 100],
+    "ordered_dithering": true
+  },
+  "prototype": {
+    "flash_used": 702484,
+    "flash_free": 161772,
+    "image_ram_size": 137464,
+    "ram_free": 124680,
+    "text": 436408,
+    "data": 266068,
+    "bss": 127628
+  },
+  "artifact": {
+    "path": "../firmware/cornix_dongle.uf2",
+    "size": 1405440,
+    "sha256": "c2dda692db622260d76d491e9ce6ab91c08a9432c6362bc2f9842f5e67049c05",
+    "uf2_min_address": "0x1000",
+    "uf2_max_end": "0xAC900",
+    "touches_storage": false,
+    "touches_bootloader": false
+  },
+  "validation_scope": "Build-generated cached Provider, cache miss/hit, final DTS animation-next and dongle-bootloader bindings, static/runtime Provider guards, ELF pack count 15, disabled-extension symbol/source exclusion, Flash/RAM, UF2 target range; no hardware validation"
+}

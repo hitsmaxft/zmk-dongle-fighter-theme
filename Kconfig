@@ -1,0 +1,6 @@
+menuconfig ZMK_DONGLE_FIGHTER_THEME
+    bool "KOF96 fighter animation provider assets"
+    default y
+    help
+      Marks the ROM-derived KOF96 provider module as available. The consuming
+      zmk-dongle-display build selects its profile and invokes the generator.

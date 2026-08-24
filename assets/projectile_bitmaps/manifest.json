@@ -1,0 +1,117 @@
+{
+  "format": "8-bit indexed BMP",
+  "frames": {
+    "athena_shcryst_swirl": {
+      "file": "athena_shcryst_swirl.bmp",
+      "width": 11,
+      "height": 11,
+      "origin_x": -5,
+      "origin_y": 43
+    },
+    "athena_shcryst_thrown_0": {
+      "file": "athena_shcryst_thrown_0.bmp",
+      "width": 11,
+      "height": 11,
+      "origin_x": -5,
+      "origin_y": 55
+    },
+    "athena_shcryst_thrown_1": {
+      "file": "athena_shcryst_thrown_1.bmp",
+      "width": 20,
+      "height": 20,
+      "origin_x": -10,
+      "origin_y": 50
+    },
+    "athena_shcryst_thrown_2": {
+      "file": "athena_shcryst_thrown_2.bmp",
+      "width": 14,
+      "height": 14,
+      "origin_x": -7,
+      "origin_y": 53
+    },
+    "geese_raging_storm_s0": {
+      "file": "geese_raging_storm_s0.bmp",
+      "width": 17,
+      "height": 62,
+      "origin_x": -26,
+      "origin_y": 2
+    },
+    "geese_raging_storm_s1": {
+      "file": "geese_raging_storm_s1.bmp",
+      "width": 17,
+      "height": 62,
+      "origin_x": 9,
+      "origin_y": 2
+    },
+    "geese_raging_storm_s2": {
+      "file": "geese_raging_storm_s2.bmp",
+      "width": 17,
+      "height": 62,
+      "origin_x": -14,
+      "origin_y": 2
+    },
+    "geese_raging_storm_s3": {
+      "file": "geese_raging_storm_s3.bmp",
+      "width": 17,
+      "height": 62,
+      "origin_x": -3,
+      "origin_y": 2
+    },
+    "iori_fire_a": {
+      "file": "iori_fire_a.bmp",
+      "width": 29,
+      "height": 17,
+      "origin_x": -15,
+      "origin_y": 47
+    },
+    "iori_fire_b": {
+      "file": "iori_fire_b.bmp",
+      "width": 29,
+      "height": 17,
+      "origin_x": -14,
+      "origin_y": 47
+    },
+    "mrkarate_haoh_d": {
+      "file": "mrkarate_haoh_d.bmp",
+      "width": 32,
+      "height": 64,
+      "origin_x": -8,
+      "origin_y": 16
+    },
+    "mrkarate_haoh_s": {
+      "file": "mrkarate_haoh_s.bmp",
+      "width": 23,
+      "height": 42,
+      "origin_x": -10,
+      "origin_y": 27
+    },
+    "terry_geyser_main": {
+      "file": "terry_geyser_main.bmp",
+      "width": 36,
+      "height": 64,
+      "origin_x": -20,
+      "origin_y": 0
+    },
+    "terry_geyser_tail": {
+      "file": "terry_geyser_tail.bmp",
+      "width": 27,
+      "height": 32,
+      "origin_x": -14,
+      "origin_y": 32
+    },
+    "goenitz_tornado_a": {
+      "file": "goenitz_tornado_a.bmp",
+      "width": 10,
+      "height": 126,
+      "origin_x": -10,
+      "origin_y": -64
+    },
+    "goenitz_tornado_b": {
+      "file": "goenitz_tornado_b.bmp",
+      "width": 10,
+      "height": 126,
+      "origin_x": 0,
+      "origin_y": -64
+    }
+  }
+}

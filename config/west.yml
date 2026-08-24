@@ -1,0 +1,7 @@
+manifest:
+  projects:
+    - name: zmk-dongle-display
+      url: https://github.com/hitsmaxft/zmk-dongle-display
+      revision: custom_anima
+  self:
+    path: zmk-dongle-fighter-theme
