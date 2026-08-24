@@ -8,7 +8,7 @@
 
 ## 2. Consumer wiring
 
-- [ ] 2.1 在 zmk-config 的 West/deps manifest 加入固定模块 revision
+- [x] 2.1 在 zmk-config 的 West/deps manifest 加入固定模块 revision
 - [x] 2.2 将 Cornix、dongle demo、EvalKit generator 路径改指模块
 - [x] 2.3 删除 zmk-config 中重复 Provider 代码、资产、测试与 Fighter OpenSpec
 - [x] 2.4 验证 `graphs/ntkof96.gb` 及本地 ROM 变体均留原位
