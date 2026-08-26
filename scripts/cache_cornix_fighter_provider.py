@@ -50,6 +50,13 @@ def input_digest(
 def profile_arguments(profile: str) -> list[str]:
     if profile == "default":
         return []
+    if profile == "mini":
+        return [
+            "--enabled-character", "Kyo",
+            "--enabled-character", "Mai",
+            "--enabled-character", "Mr_Karate",
+            "--enabled-character", "Terry",
+        ]
     if profile == "twenty":
         return ["--enabled-character", "all"]
     if profile == "eighteen":

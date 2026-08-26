@@ -125,6 +125,11 @@ ABI v9 将复合招式改为双常驻对象：人物 image 保留最近人物帧
 版本增加 1224B Flash、32B 静态 RAM；第二 `lv_image_t` 基体由既有 8KB LVGL heap
 分配 92B，另有少量 allocator／style 元数据。未含 role 的旧 Provider 不创建道具对象。
 
+Cornix 首次双对象实屏在 8KB LVGL heap 下出现黑屏而 ZMK／USB 仍运行，故诊断配置将
+`CONFIG_LV_Z_MEM_POOL_SIZE` 提至 9216，并在完成建屏后打印 heap total／free／max_used／
+used／fragmentation。此版尚待实屏，未验证前不可把 heap 耗尽写作最终根因；若恢复，
+应依日志余量回收至仍有安全裕量的最小值，而非继续扩大。
+
 紧裁剪脏区仍非可用配置：若未来其他屏幕仍有转换或写屏压力，方考虑避免人物／道具以
 64×64 透明画布在远距离位置间切换。
 

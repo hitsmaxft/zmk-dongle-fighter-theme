@@ -69,6 +69,17 @@ class FighterPlaybackTest(unittest.TestCase):
             (BITMAPS / "manifest.json").read_text(encoding="utf-8")
         )
 
+    def test_mini_profile_enables_only_requested_fighters(self):
+        self.assertEqual(
+            profile_arguments("mini"),
+            [
+                "--enabled-character", "Kyo",
+                "--enabled-character", "Mai",
+                "--enabled-character", "Mr_Karate",
+                "--enabled-character", "Terry",
+            ],
+        )
+
     def test_invalid_playback_order_reports_context(self):
         cases = [
             ([], r"order must contain 1..127"),
