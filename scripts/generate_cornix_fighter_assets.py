@@ -501,6 +501,18 @@ def pack_i1(canvas: list[list[int]]) -> bytes:
     return bytes(packed)
 
 
+def source_frame_role(frame: dict[str, object]) -> int:
+    sources = frame.get("sources", [])
+    return int(
+        any(
+            isinstance(source, list)
+            and len(source) > 0
+            and source[0] == "projectile"
+            for source in sources
+        )
+    )
+
+
 def png_gray(path: Path, width: int, height: int, pixels: bytes) -> None:
     def chunk(kind: bytes, payload: bytes) -> bytes:
         body = kind + payload
@@ -1099,6 +1111,12 @@ def main() -> None:
                     all_contacts[character_name].append(canvas)
 
             symbols = [symbol_by_source_index[index] for index in playback_order]
+            playback_roles = [source_frame_role(all_frames[index]) for index in playback_order]
+            frame_roles = playback_roles if any(playback_roles) else None
+            if frame_roles is not None and frame_roles[0] != 0:
+                raise ValueError(
+                    f"{character_name}/{sequence} projectile track must start with a character frame"
+                )
             playback_step_count += len(symbols)
             frame_durations_ms = (
                 playback_entry.get("durations_ms") if playback_entry is not None else None
@@ -1115,6 +1133,7 @@ def main() -> None:
             table_data[character_name][sequence] = {
                 "name": table_name,
                 "symbols": symbols,
+                "frame_roles": frame_roles,
                 "movement_steps": movement_steps,
                 "return_step": playback_entry.get("return_step") if playback_entry else None,
                 "x_offsets": playback_entry.get("x_offsets") if playback_entry else None,
@@ -1169,6 +1188,7 @@ def main() -> None:
                 "durations_ms": frame_durations_ms,
                 "duration_ms": duration_ms,
                 "symbols": symbols,
+                "frame_roles": frame_roles,
                 "generated_symbols": generated_symbols,
             }
             if playback_entry is not None and playback_entry.get("timing") is not None:
@@ -1245,11 +1265,13 @@ def main() -> None:
                 f"static const void *const {table['name']}[] = {{\n{refs},\n}};\n"
             )
             movement_steps = table["movement_steps"]
+            frame_roles = table["frame_roles"]
             return_step = table["return_step"]
             x_offsets = table["x_offsets"]
             y_offsets = table["y_offsets"]
             frame_durations_ms = table["durations_ms"]
             movement_name = f"{table['name']}_movement"
+            roles_name = f"{table['name']}_roles"
             offsets_name = f"{table['name']}_x_offsets"
             y_offsets_name = f"{table['name']}_y_offsets"
             durations_name = f"{table['name']}_durations_ms"
@@ -1257,6 +1279,11 @@ def main() -> None:
                 movement_values = ", ".join(str(step) for step in movement_steps)
                 provider_parts.append(
                     f"static const uint8_t {movement_name}[] = {{{movement_values}}};"
+                )
+            if frame_roles is not None:
+                role_values = ", ".join(str(role) for role in frame_roles)
+                provider_parts.append(
+                    f"static const uint8_t {roles_name}[] = {{{role_values}}};"
                 )
             if x_offsets is not None:
                 offset_values = ", ".join(str(offset) for offset in x_offsets)
@@ -1273,6 +1300,33 @@ def main() -> None:
                 provider_parts.append(
                     f"static const uint16_t {durations_name}[] = {{{duration_values}}};"
                 )
+            if frame_roles is not None:
+                movement_argument = movement_name if movement_steps is not None else "NULL"
+                x_argument = offsets_name if x_offsets is not None else "NULL"
+                y_argument = y_offsets_name if y_offsets is not None else "NULL"
+                duration_argument = (
+                    durations_name if frame_durations_ms is not None else "NULL"
+                )
+                return_argument = (
+                    str(return_step)
+                    if return_step is not None
+                    else "ZMK_DONGLE_ANIMATION_NO_RETURN_STEP"
+                )
+                motion_argument = (
+                    "ZMK_DONGLE_ANIMATION_MOTION_NONE"
+                    if x_offsets is not None
+                    else "ZMK_DONGLE_ANIMATION_MOTION_LEFT_EDGE"
+                )
+                endpoint_hold = 0 if frame_durations_ms is not None else FIGHTER_ENDPOINT_HOLD_MS
+                provider_parts.append(
+                    f"ZMK_DONGLE_ANIMATION_ACTION_TRACKS_DEFINE("
+                    f"kof96_{character_slug}_{sequence}, {table['name']}, {roles_name}, "
+                    f"{movement_argument}, {x_argument}, {y_argument}, {duration_argument}, "
+                    f"{return_argument}, {table['duration_ms']}, {endpoint_hold}, "
+                    f"{motion_argument}, ZMK_DONGLE_ANIMATION_FLAG_FULLSCREEN | "
+                    f"ZMK_DONGLE_ANIMATION_FLAG_BATTLE_HUD);"
+                )
+                continue
             if sequence == "mid":
                 macro = (
                     "ZMK_DONGLE_ANIMATION_ACTION_LAYOUT_CADENCE_MOVEMENT_RETURN_DEFINE"

@@ -7,8 +7,10 @@
 ## 必须使用特殊版 Dongle Display
 
 本模块依赖 `hitsmaxft/zmk-dongle-display` 的 `custom_anima` 特殊分支及其
-Provider ABI 8，不兼容原上游或该仓库的普通 `main` 分支。为使构建可复现，推荐在
-West manifest 中锁定已经验证的提交：
+Provider ABI 9，不兼容原上游或该仓库的普通 `main` 分支。为使构建可复现，推荐在
+West manifest 中锁定已经验证的提交。下列历史 revision 尚早于本工作树的 ABI v9
+双对象改动；在 display 与 theme 新提交发布前，应直接使用当前父工作区中的两个 module，
+不可仅凭该 revision 宣称具备 ABI v9：
 
 ```yaml
 manifest:
@@ -25,11 +27,11 @@ manifest:
 
 若使用 `config/deps.yml` 导入依赖，亦须令 `zmk-dongle-display` 指向
 `custom_anima`，不可误用普通 `main`。更新依赖后，应确认实际检出的 display 提交
-包含 ABI 8：
+包含 ABI 9：
 
 ```sh
 git -C zmodules/zmk-dongle-display rev-parse HEAD
-rg "ZMK_DONGLE_ANIMATION_PROVIDER_ABI_VERSION 8" \
+rg "ZMK_DONGLE_ANIMATION_PROVIDER_ABI_VERSION 9" \
   zmodules/zmk-dongle-display/include/zmk/dongle_display/animation.h
 ```
 
@@ -63,6 +65,75 @@ CONFIG_ZMK_DONGLE_DISPLAY_ANIMATION_DEMO_MODE=n
 所有生成器与缓存路径皆相对 `ZMK_CONFIG`。`--source-ticks-per-display-frame 2`
 把游戏约 60 tick/s 的逻辑时序量化为约 30 次/s 的 OLED 更新，同时保留动作总时长。
 除非正在做容量或抽帧实验，不建议加入 `--allow-source-frame-drop`。
+
+cache generator 对 `default`、`mini` 等缩减 profile 仅输出实际启用人物的 C
+资产与 manifest，不再先生成二十人物的大头文件后交由预处理器丢弃。此优化只降低
+生成时间、头文件大小与编译峰值内存，不改变启用人物的帧、时序或最终图片字节；
+`twenty` 仍保留完整二十人物容量路径。
+
+## 显示性能选项
+
+Fighter Theme 只提供 Provider；OLED 总线由消费端 shield 配置。Cornix 当前已知可
+正常持续刷新的基线为 TWI／100kHz：
+
+```dts
+&i2c0 {
+    compatible = "nordic,nrf-twi";
+};
+```
+
+曾同时改为 `nordic,nrf-twim` 与 400kHz：构建及初始画面皆成功，然实屏持续渲染冻结；
+键盘输入及按键唤醒屏幕仍正常，连续二十秒 CDC 日志亦未见 NACK、timeout 或 bus
+recovery。故只能判定“TWIM／400kHz 组合失败”，不能单独归因于 DMA 或总线频率；默认
+已退回 TWI／100kHz。实屏复测确认该救援版正常启动、按键与唤醒正常，但动画撕裂与
+此前相同，故 100kHz 稳定而带宽不足。不得把 TWIM／400kHz 失败组合列为推荐配置。
+
+后续保持 `nordic,nrf-twi`，仅增加 `clock-frequency = <I2C_BITRATE_FAST>`。实屏确认
+此 TWI／400kHz 版本正常启动、持续刷新且不再撕裂；随后两路 CDC 各采样十秒，未见
+I²C error、NACK、timeout 或 bus recovery。故 Cornix 推荐配置改为 TWI／400kHz，
+不再试无必要且已有组合失败证据的 TWIM。
+
+该版本最终仍为 `CONFIG_I2C_NRFX_TWI=y`，DTS 频率为 400000，VDB 仍为 100、display
+tick 仍为 10ms；故无撕裂结果可归因于单一频率变化，而非 VDB、调度或帧表。
+
+LVGL 单色输出同时持有行式 render buffer 与 SH1106 竖向 conversion buffer。
+128×64 I1 下可按目标选 `CONFIG_LV_Z_VDB_SIZE`：
+
+| 取值 | 两缓冲合计 | 定位 | 状态 |
+|---:|---:|---|---|
+| `100` | 约 2064B | 刷新延迟优先，Cornix 当前默认 | 已构建 |
+| `25` | 约 528B | RAM／回调次数平衡，约省 1536B | 可选，待实屏 |
+| `13` | 约 282B | 单页级最小缓冲，约省 1782B | 实验，非默认 |
+
+减小 VDB 不会减少同一脏区须写入 OLED 的总字节，且会增加 LVGL 分段回调；故其用途
+是省 RAM，不是提帧率。当前显示线程每 10ms 调用一次 LVGL，而刷新周期为 33ms；若
+实测 CPU 空闲唤醒偏高，可试 `CONFIG_ZMK_DISPLAY_TICK_PERIOD_MS=16`，但须复测按键状态
+显示延迟。不可仅把 tick 改成 33ms，因动画 timer 与刷新 timer 同相时可能增加整帧等待。
+
+播放器现已采用绝对 deadline 合帧：首个须等绘制的步骤仍由 `LV_EVENT_DRAW_POST` 确定
+动作 epoch；其后每个 deadline 从前一 deadline 累加。若同步 SH1106 flush 令显示队列
+错过一个或多个 33／34ms 区间，下一 timer callback 直接选择当前墙钟所在步骤，不再
+逐帧补画过期状态。此逻辑复用原 frame timer，只增加一个 64 位 deadline，不增加线程、
+对象、canvas 或 heap allocation。Cornix 构建较未合帧版增 304B Flash、8B RAM。
+
+ABI v9 将复合招式改为双常驻对象：人物 image 保留最近人物帧，永不因道具可见而消失；
+道具 image 独立显／隐、换图及移动。生成器从素材 manifest 的 `sources` 自动生成逐步
+`frame_roles[]`；人物步骤更新人物并隐藏道具，道具步骤只更新覆盖层。30Hz 跳帧会先
+归并所有过期 role，再向 LVGL 提交一次最终双轨状态，故不会因跳帧丢失人物姿态。
+
+此方案不新增 timer、canvas、framebuffer 或 bitmap RAM。Cornix 相较单对象 deadline
+版本增加 1224B Flash、32B 静态 RAM；第二 `lv_image_t` 基体由既有 8KB LVGL heap
+分配 92B，另有少量 allocator／style 元数据。未含 role 的旧 Provider 不创建道具对象。
+
+紧裁剪脏区仍非可用配置：若未来其他屏幕仍有转换或写屏压力，方考虑避免人物／道具以
+64×64 透明画布在远距离位置间切换。
+
+紧裁剪若允许逐帧不同尺寸，仍须同步扩充坐标锚点与运行时校验。离线预合成 128×64
+整帧会扩大脏区并重复人物 bitmap，不列为性能选项。
+
+性能验收须依次记录：最终 DTS／Kconfig、Flash／RAM、I²C NACK 或 bus recovery 日志、
+Terry 与 Mr. Karate 道具段实测帧间隔、动作总时长及显示线程 CPU 占用。未具硬件证据时，
+文档只可写“已构建”，不可写“已达 30fps”。
 
 ### 默认人物
 

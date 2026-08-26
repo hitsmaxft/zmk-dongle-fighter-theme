@@ -746,7 +746,7 @@ class FighterPlaybackTest(unittest.TestCase):
         self.assertEqual(fast["durations_ms"][28:41], [60] + [80] * 12)
         self.assertEqual(len(fast["generated_symbols"]), 30)
 
-    def test_terry_hidden_max_alternates_replacing_geysers(self):
+    def test_terry_hidden_max_preserves_geyser_timeline(self):
         with tempfile.TemporaryDirectory() as directory:
             result = self.generate_character(directory, "Terry")
         fast = result["characters"]["Terry"]["sequences"]["fast"]
@@ -782,6 +782,29 @@ class FighterPlaybackTest(unittest.TestCase):
             },
         )
         self.assertEqual(len(fast["generated_symbols"]), 5)
+
+    def test_projectile_actions_emit_dual_object_roles(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            result = self.generate_character(directory, "Terry")
+            header = (root / "generated" / "kof96_provider.h").read_text(
+                encoding="utf-8"
+            )
+
+        fast = result["characters"]["Terry"]["sequences"]["fast"]
+        roles = fast["frame_roles"]
+        source_frames = self.bitmap_manifest["characters"]["Terry"]["animations"][
+            "fighter_fast_projectile"
+        ]["frames"]
+        expected = [
+            int(source_frames[index]["sources"][0][0] == "projectile")
+            for index in fast["playback_order"]
+        ]
+        self.assertEqual(roles, expected)
+        self.assertEqual(roles[0], 0)
+        self.assertIn(1, roles)
+        self.assertIn("fighter_terry_fast_images_roles[]", header)
+        self.assertIn("ZMK_DONGLE_ANIMATION_ACTION_TRACKS_DEFINE(", header)
 
     def test_mr_karate_finishes_with_alternating_projectile(self):
         with tempfile.TemporaryDirectory() as directory:

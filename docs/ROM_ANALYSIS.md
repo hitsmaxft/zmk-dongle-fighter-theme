@@ -29,10 +29,10 @@ Dongle 不移植战斗状态机。生成期把已选路径展开为 frame、X/Y�
 
 ## 复合 projectile
 
-- 普通 Iori 八稚女终段之 `PF3_FIRE` 是独立命中特效，Dongle 以人物终结帧与两张火焰
-  映射交替三轮，不增加第二 LVGL object。
+- 普通 Iori 八稚女终段之 `PF3_FIRE` 是独立命中特效，Dongle 以第二 LVGL image 在
+  常驻人物终结帧上方显／隐两张火焰映射三轮，不增加 timer、canvas 或 bitmap RAM。
 - Terry hidden MAX 的十五枚前置 Power Geyser 会被后枚覆盖，末枚方走完对象映射；
-  人物与现存 projectile 以单 image 时间线交替。
+  人物常驻，现存 projectile 在独立 image 上移动、换图或隐藏。
 - Athena Shining Crystal Bit 收录 swirl 与三张 thrown 映射；charge projectile code 明注
   跨玩家隔帧执行，即对象路径本已约 30Hz。
 - Geese Raging Storm S 光柱寿命 `$3C` source ticks，初速 0；余寿命小于 `$10` 改速 1，
